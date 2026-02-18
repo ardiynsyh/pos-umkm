@@ -393,20 +393,6 @@ export default function SettingsPage() {
               </div>
             </Card>
 
-            {/* ── Database ── */}
-            <Card title="Informasi Database">
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between py-2 border-b">
-                  <span className="text-gray-600">Database Type</span>
-                  <span className="font-medium">IndexedDB (Dexie.js)</span>
-                </div>
-                <div className="flex justify-between py-2">
-                  <span className="text-gray-600">Cara Lihat</span>
-                  <span className="font-medium text-blue-600">F12 → Application → IndexedDB</span>
-                </div>
-              </div>
-            </Card>
-
             {/* ── Save ── */}
             <div className="flex justify-end">
               <Button onClick={handleSave} disabled={isSaving} size="lg" className="flex items-center gap-2">

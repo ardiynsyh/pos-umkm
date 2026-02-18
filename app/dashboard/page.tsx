@@ -3,7 +3,7 @@
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import { Navbar } from '@/components/shared/Navbar';
 import Link from 'next/link';
-import { ShoppingCart, Package, BarChart3, Users, Settings } from 'lucide-react';
+import { ShoppingCart, Package, BarChart3, Users, Settings, Wallet } from 'lucide-react';
 import { useAuthStore } from '@/lib/store/authStore';
 
 export default function DashboardPage() {
@@ -37,6 +37,13 @@ export default function DashboardPage() {
   if (user?.role === 'owner') {
     menuItems.push(
       {
+        href: '/pengeluaran',
+        title: 'Pengeluaran',
+        description: 'Catat dan kelola pengeluaran toko',
+        icon: Wallet,
+        color: 'red',
+      },
+      {
         href: '/users',
         title: 'User Management',
         description: 'Kelola user kasir dan akses',
@@ -53,10 +60,11 @@ export default function DashboardPage() {
     );
   }
 
-  const colorClasses = {
+  const colorClasses: Record<string, string> = {
     blue: 'bg-blue-100 group-hover:bg-blue-200 text-blue-600',
     green: 'bg-green-100 group-hover:bg-green-200 text-green-600',
     purple: 'bg-purple-100 group-hover:bg-purple-200 text-purple-600',
+    red: 'bg-red-100 group-hover:bg-red-200 text-red-600',
     orange: 'bg-orange-100 group-hover:bg-orange-200 text-orange-600',
     gray: 'bg-gray-100 group-hover:bg-gray-200 text-gray-600',
   };
