@@ -116,21 +116,6 @@ export default function LoginPage() {
               {isLoading ? 'Memproses...' : 'Login'}
             </Button>
           </form>
-
-          {/* Demo Credentials */}
-          <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <p className="text-sm font-semibold text-gray-700 mb-2">
-              Demo Credentials:
-            </p>
-            <div className="space-y-1 text-sm text-gray-600">
-              <p>
-                <span className="font-medium">Owner:</span> owner / owner123
-              </p>
-              <p>
-                <span className="font-medium">Kasir:</span> kasir / kasir123
-              </p>
-            </div>
-          </div>
         </div>
 
         {/* Copyright */}
