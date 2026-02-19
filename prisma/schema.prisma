@@ -134,3 +134,59 @@ model TransactionItem {
 
   @@map("transaction_items")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TAMBAHKAN model-model ini ke dalam prisma/schema.prisma yang sudah ada
+// Jangan hapus model yang sudah ada sebelumnya!
+// ─────────────────────────────────────────────────────────────────────────────
+
+model Table {
+  id        String   @id @default(cuid())
+  number    Int      @unique   // nomor meja
+  label     String             // "Meja 1", "Meja 2", dst
+  isActive  Boolean  @default(true)
+  orders    Order[]
+  createdAt DateTime @default(now())
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  orderNumber String      @unique // e.g. "ORD-001"
+  tableId     String
+  table       Table       @relation(fields: [tableId], references: [id])
+  customerName String?
+  status      OrderStatus @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMethod String?       // "midtrans", "cash"
+  midtransToken String?       // snap token dari midtrans
+  midtransOrderId String?     @unique
+  totalAmount Float
+  items       OrderItem[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  productName String  // simpan nama saat order (antisipasi produk dihapus)
+  price     Float
+  quantity  Int
+  subtotal  Float
+}
+
+enum OrderStatus {
+  PENDING      // baru masuk, belum diproses
+  PROCESSING   // sedang diproses dapur/kasir
+  READY        // siap disajikan
+  COMPLETED    // selesai
+  CANCELLED    // dibatalkan
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+}

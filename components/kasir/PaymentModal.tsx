@@ -135,7 +135,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           {/* WA Status */}
           {waSent !== null && (
             <div
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm print:hidden ${
                 waSent
                   ? 'bg-green-50 text-green-700 border border-green-200'
                   : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
@@ -227,7 +227,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 print:hidden">
             <Button variant="outline" onClick={handlePrint} className="flex-1 flex items-center justify-center gap-2">
               <Printer className="w-4 h-4" />
               Print Struk
@@ -332,7 +332,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
           </Button>
           <Button
             onClick={handlePayment}
-            disabled={isProcessing || (paymentMethod === 'cash' && change < 0)}
+            disabled={isProcessing || (paymentMethod === 'cash' && (!paymentAmount || parseFloat(paymentAmount) <= 0 || change < 0))}
             className="flex-1"
           >
             {isProcessing ? 'Memproses...' : 'Bayar'}

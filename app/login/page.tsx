@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { db } from '@/lib/db/database';
 import { useAuthStore } from '@/lib/store/authStore';
@@ -17,6 +17,18 @@ export default function LoginPage() {
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isInitializing, setIsInitializing] = useState(true);
+
+  // Initialize database on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        await db.seedInitialData();
+      } finally {
+        setIsInitializing(false);
+      }
+    })();
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,6 +94,7 @@ export default function LoginPage() {
                 value={formData.username}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                 placeholder="Masukkan username"
+                disabled={isInitializing}
                 required
               />
             </div>
@@ -96,6 +109,7 @@ export default function LoginPage() {
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 placeholder="Masukkan password"
+                disabled={isInitializing}
                 required
               />
             </div>
