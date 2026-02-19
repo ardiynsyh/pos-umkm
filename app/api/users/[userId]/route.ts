@@ -3,7 +3,7 @@ import { prisma } from '@/lib/db/prisma';
 
 export async function PUT(
   req: Request,
-  context: { params: Promise<{ usersId: string }> }
+  context: { params: Promise<{ userId: string }> }
 ) {
   try {
     const { userId } = await context.params;
