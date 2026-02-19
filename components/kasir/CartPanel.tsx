@@ -48,7 +48,7 @@ export const CartPanel: React.FC<CartPanelProps> = ({
                   {item.name}
                 </h3>
                 <button
-                  onClick={() => onRemoveItem(item.id!)}
+                  onClick={() => onRemoveItem(Number(item.id!))}
                   className="text-red-500 hover:text-red-700 ml-2"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -58,14 +58,14 @@ export const CartPanel: React.FC<CartPanelProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => onUpdateQuantity(item.id!, item.quantity - 1)}
+                    onClick={() => onUpdateQuantity(Number(item.id!), item.quantity - 1)}
                     className="bg-gray-100 hover:bg-gray-200 p-1 rounded"
                   >
                     <Minus className="w-4 h-4" />
                   </button>
                   <span className="w-8 text-center font-medium">{item.quantity}</span>
                   <button
-                    onClick={() => onUpdateQuantity(item.id!, item.quantity + 1)}
+                    onClick={() => onUpdateQuantity(Number(item.id!), item.quantity + 1)}
                     className="bg-gray-100 hover:bg-gray-200 p-1 rounded"
                     disabled={item.quantity >= item.stock}
                   >
