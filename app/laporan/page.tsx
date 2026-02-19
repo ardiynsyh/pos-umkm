@@ -2,8 +2,7 @@
 
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import { Navbar } from '@/components/shared/Navbar';
-import React, { useState, useEffect } from 'react';
-import { db, Transaction } from '@/lib/db/database';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui';
 import { formatCurrency, formatDateTime } from '@/lib/utils/format';
 import {
@@ -15,28 +14,85 @@ import {
   Filter,
   ChevronDown,
   ChevronUp,
+  Store,
+  Smartphone,
 } from 'lucide-react';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+interface TransactionItem {
+  productName: string;
+  quantity: number;
+  price: number;
+  subtotal: number;
+}
+
+interface Transaction {
+  id: string;
+  transactionNumber: string;
+  source: 'kasir' | 'customer';
+  total: number;
+  paymentMethod: string;
+  cashierName: string;
+  customerName: string;
+  tableInfo: string;
+  paymentAmount: number;
+  change: number;
+  createdAt: string;
+  items: TransactionItem[];
+}
+
+interface Stats {
+  totalRevenue: number;
+  totalTransactions: number;
+  averageTransaction: number;
+  todayRevenue: number;
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 const MONTHS = [
   'Januari','Februari','Maret','April','Mei','Juni',
-  'Juli','Agustus','September','Oktober','November','Desember'
+  'Juli','Agustus','September','Oktober','November','Desember',
 ];
 
+const paymentLabel = (method: string) => {
+  const map: Record<string, string> = {
+    cash: 'Tunai',
+    card: 'Kartu',
+    qris: 'QRIS',
+    transfer: 'Transfer',
+    ewallet: 'E-Wallet',
+  };
+  return map[method] || method;
+};
+
+const paymentColor = (method: string) => {
+  const map: Record<string, string> = {
+    cash: 'bg-green-100 text-green-800',
+    card: 'bg-blue-100 text-blue-800',
+    qris: 'bg-purple-100 text-purple-800',
+    transfer: 'bg-indigo-100 text-indigo-800',
+    ewallet: 'bg-orange-100 text-orange-800',
+  };
+  return map[method] || 'bg-gray-100 text-gray-800';
+};
+
+// ─── Halaman Laporan ──────────────────────────────────────────────────────────
 export default function LaporanPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<Stats>({
     totalRevenue: 0,
     totalTransactions: 0,
     averageTransaction: 0,
     todayRevenue: 0,
   });
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<'today' | 'week' | 'month' | 'all' | 'custom'>('today');
 
   const now = new Date();
-  const [customDay, setCustomDay] = useState<string>('');
-  const [customMonth, setCustomMonth] = useState<string>(String(now.getMonth() + 1));
-  const [customYear, setCustomYear] = useState<string>(String(now.getFullYear()));
+  const [customDay, setCustomDay] = useState('');
+  const [customMonth, setCustomMonth] = useState(String(now.getMonth() + 1));
+  const [customYear, setCustomYear] = useState(String(now.getFullYear()));
 
   const yearOptions = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
   const daysInMonth = customMonth && customYear
@@ -44,56 +100,35 @@ export default function LaporanPage() {
     : 31;
   const dayOptions = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-  useEffect(() => {
-    loadTransactions();
+  // ─── Fetch dari PostgreSQL via API ────────────────────────────────────────
+  const loadTransactions = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ filter });
+      if (filter === 'custom') {
+        if (customDay) params.set('day', customDay);
+        if (customMonth) params.set('month', customMonth);
+        if (customYear) params.set('year', customYear);
+      }
+
+      const res = await fetch(`/api/laporan?${params.toString()}`);
+      if (!res.ok) throw new Error('Gagal fetch');
+      const data = await res.json();
+
+      setTransactions(data.transactions);
+      setStats(data.stats);
+    } catch (err) {
+      console.error('Gagal memuat laporan:', err);
+    } finally {
+      setLoading(false);
+    }
   }, [filter, customDay, customMonth, customYear]);
 
-  const loadTransactions = async () => {
-    let allTransactions = await db.transactions.orderBy('createdAt').reverse().toArray();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  useEffect(() => {
+    loadTransactions();
+  }, [loadTransactions]);
 
-    if (filter === 'today') {
-      allTransactions = allTransactions.filter((t) => t.createdAt >= today);
-    } else if (filter === 'week') {
-      const weekAgo = new Date(today);
-      weekAgo.setDate(weekAgo.getDate() - 7);
-      allTransactions = allTransactions.filter((t) => t.createdAt >= weekAgo);
-    } else if (filter === 'month') {
-      const monthAgo = new Date(today);
-      monthAgo.setMonth(monthAgo.getMonth() - 1);
-      allTransactions = allTransactions.filter((t) => t.createdAt >= monthAgo);
-    } else if (filter === 'custom' && customMonth && customYear) {
-      const yr = parseInt(customYear);
-      const mo = parseInt(customMonth) - 1;
-      if (customDay) {
-        const dy = parseInt(customDay);
-        allTransactions = allTransactions.filter((t) => {
-          const d = t.createdAt;
-          return d.getFullYear() === yr && d.getMonth() === mo && d.getDate() === dy;
-        });
-      } else {
-        allTransactions = allTransactions.filter((t) => {
-          const d = t.createdAt;
-          return d.getFullYear() === yr && d.getMonth() === mo;
-        });
-      }
-    }
-
-    setTransactions(allTransactions);
-
-    const totalRevenue = allTransactions.reduce((sum, t) => sum + t.total, 0);
-    const todayTransactions = allTransactions.filter((t) => t.createdAt >= today);
-    const todayRevenue = todayTransactions.reduce((sum, t) => sum + t.total, 0);
-
-    setStats({
-      totalRevenue,
-      totalTransactions: allTransactions.length,
-      averageTransaction: allTransactions.length > 0 ? totalRevenue / allTransactions.length : 0,
-      todayRevenue,
-    });
-  };
-
-  const toggleRow = (id: number) => {
+  const toggleRow = (id: string) => {
     setExpandedRows((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
@@ -101,39 +136,29 @@ export default function LaporanPage() {
     });
   };
 
+  // ─── Export CSV ───────────────────────────────────────────────────────────
   const exportToCSV = () => {
     const rows: string[][] = [];
-
-    // Header
     rows.push([
-      'No Transaksi',
-      'Tanggal',
-      'Kasir',
-      'Produk',
-      'Qty',
-      'Harga Satuan',
-      'Subtotal Produk',
-      'Total Transaksi',
-      'Metode Pembayaran',
-      'Jumlah Bayar',
-      'Kembalian',
+      'No Transaksi', 'Sumber', 'Tanggal', 'Kasir/Customer',
+      'Meja', 'Produk', 'Qty', 'Harga Satuan', 'Subtotal Produk',
+      'Total Transaksi', 'Metode Pembayaran',
     ]);
 
-    // Rows — satu baris per item produk
     transactions.forEach((t) => {
       t.items.forEach((item, idx) => {
         rows.push([
-          idx === 0 ? t.transactionNumber : '',           // No transaksi hanya di baris pertama
-          idx === 0 ? formatDateTime(t.createdAt) : '',
-          idx === 0 ? (t.cashierName || 'Kasir') : '',
+          idx === 0 ? t.transactionNumber : '',
+          idx === 0 ? (t.source === 'customer' ? 'Customer Order' : 'Kasir') : '',
+          idx === 0 ? new Date(t.createdAt).toLocaleString('id-ID') : '',
+          idx === 0 ? (t.source === 'customer' ? t.customerName || 'Customer' : t.cashierName) : '',
+          idx === 0 ? (t.tableInfo || '-') : '',
           item.productName,
           String(item.quantity),
           String(item.price),
           String(item.subtotal),
           idx === 0 ? String(t.total) : '',
-          idx === 0 ? (t.paymentMethod === 'cash' ? 'Tunai' : t.paymentMethod === 'card' ? 'Kartu' : 'E-Wallet') : '',
-          idx === 0 && t.paymentMethod === 'cash' ? String(t.paymentAmount) : '',
-          idx === 0 && t.paymentMethod === 'cash' ? String(t.change) : '',
+          idx === 0 ? paymentLabel(t.paymentMethod) : '',
         ]);
       });
     });
@@ -143,23 +168,14 @@ export default function LaporanPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `laporan-detail-${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `laporan-${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
   };
 
   const customLabel = filter === 'custom'
-    ? [customDay || null, customMonth ? MONTHS[parseInt(customMonth) - 1] : null, customYear].filter(Boolean).join(' ')
+    ? [customDay || null, customMonth ? MONTHS[parseInt(customMonth) - 1] : null, customYear]
+        .filter(Boolean).join(' ')
     : '';
-
-  const paymentLabel = (method: string) =>
-    method === 'cash' ? 'Tunai' : method === 'card' ? 'Kartu' : 'E-Wallet';
-
-  const paymentColor = (method: string) =>
-    method === 'cash'
-      ? 'bg-green-100 text-green-800'
-      : method === 'card'
-      ? 'bg-blue-100 text-blue-800'
-      : 'bg-purple-100 text-purple-800';
 
   return (
     <ProtectedRoute>
@@ -167,6 +183,8 @@ export default function LaporanPage() {
 
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-7xl mx-auto px-4 py-6">
+
+          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-bold text-gray-800">Laporan Penjualan</h1>
             <button
@@ -209,40 +227,29 @@ export default function LaporanPage() {
               <div className="flex flex-wrap gap-3 items-end">
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-gray-500 font-medium">Tanggal <span className="text-gray-400">(opsional)</span></label>
-                  <select
-                    value={customDay}
-                    onChange={(e) => setCustomDay(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[90px]"
-                  >
+                  <select value={customDay} onChange={(e) => setCustomDay(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[90px]">
                     <option value="">Semua</option>
                     {dayOptions.map((d) => <option key={d} value={String(d)}>{d}</option>)}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-gray-500 font-medium">Bulan</label>
-                  <select
-                    value={customMonth}
-                    onChange={(e) => { setCustomMonth(e.target.value); setCustomDay(''); }}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[130px]"
-                  >
+                  <select value={customMonth} onChange={(e) => { setCustomMonth(e.target.value); setCustomDay(''); }}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[130px]">
                     {MONTHS.map((m, i) => <option key={i} value={String(i + 1)}>{m}</option>)}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-gray-500 font-medium">Tahun</label>
-                  <select
-                    value={customYear}
-                    onChange={(e) => { setCustomYear(e.target.value); setCustomDay(''); }}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[100px]"
-                  >
+                  <select value={customYear} onChange={(e) => { setCustomYear(e.target.value); setCustomDay(''); }}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[100px]">
                     {yearOptions.map((y) => <option key={y} value={String(y)}>{y}</option>)}
                   </select>
                 </div>
                 {customDay && (
-                  <button
-                    onClick={() => setCustomDay('')}
-                    className="px-3 py-2 text-sm text-gray-500 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                  >
+                  <button onClick={() => setCustomDay('')}
+                    className="px-3 py-2 text-sm text-gray-500 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                     Reset Tanggal
                   </button>
                 )}
@@ -294,35 +301,52 @@ export default function LaporanPage() {
             </Card>
           </div>
 
-          {/* Transaction List */}
+          {/* Tabel Transaksi */}
           <Card title="Riwayat Transaksi">
-            <p className="text-xs text-gray-400 mb-3">Klik baris transaksi untuk melihat detail produk</p>
+            <p className="text-xs text-gray-400 mb-3">
+              Klik baris transaksi untuk melihat detail produk •
+              <span className="inline-flex items-center gap-1 ml-2">
+                <Store className="w-3 h-3" /> = Kasir
+              </span>
+              <span className="inline-flex items-center gap-1 ml-2">
+                <Smartphone className="w-3 h-3" /> = Customer Order
+              </span>
+            </p>
+
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50 border-b">
                   <tr>
                     <th className="w-8 px-2 py-3"></th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">No. Transaksi</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Sumber</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Tanggal</th>
-                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kasir</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Kasir / Meja</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Item</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pembayaran</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
-                  {transactions.length === 0 ? (
+                  {loading ? (
                     <tr>
-                      <td colSpan={7} className="px-4 py-8 text-center text-gray-500">Tidak ada transaksi</td>
+                      <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
+                        <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                        Memuat data...
+                      </td>
+                    </tr>
+                  ) : transactions.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-4 py-8 text-center text-gray-500">Tidak ada transaksi</td>
                     </tr>
                   ) : (
                     transactions.map((transaction) => {
-                      const isExpanded = expandedRows.has(transaction.id!);
+                      const isExpanded = expandedRows.has(transaction.id);
                       return (
                         <React.Fragment key={transaction.id}>
                           {/* Main row */}
                           <tr
-                            onClick={() => toggleRow(transaction.id!)}
+                            onClick={() => toggleRow(transaction.id)}
                             className="hover:bg-blue-50 cursor-pointer transition-colors"
                           >
                             <td className="px-2 py-3 text-center text-gray-400">
@@ -330,11 +354,35 @@ export default function LaporanPage() {
                                 ? <ChevronUp className="w-4 h-4 mx-auto" />
                                 : <ChevronDown className="w-4 h-4 mx-auto" />}
                             </td>
-                            <td className="px-4 py-3 text-sm font-medium text-gray-900">{transaction.transactionNumber}</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{formatDateTime(transaction.createdAt)}</td>
-                            <td className="px-4 py-3 text-sm text-gray-600">{transaction.cashierName || 'Kasir'}</td>
+                            <td className="px-4 py-3 text-sm font-medium text-gray-900">
+                              {transaction.transactionNumber}
+                            </td>
+                            <td className="px-4 py-3 text-sm">
+                              {transaction.source === 'customer' ? (
+                                <span className="flex items-center gap-1 text-orange-600">
+                                  <Smartphone className="w-3 h-3" /> Customer
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-1 text-blue-600">
+                                  <Store className="w-3 h-3" /> Kasir
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              {new Date(transaction.createdAt).toLocaleString('id-ID', {
+                                day: '2-digit', month: 'short', year: 'numeric',
+                                hour: '2-digit', minute: '2-digit',
+                              })}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">
+                              {transaction.source === 'customer'
+                                ? `${transaction.tableInfo || '-'} · ${transaction.customerName || 'Customer'}`
+                                : transaction.cashierName}
+                            </td>
                             <td className="px-4 py-3 text-sm text-gray-600">{transaction.items.length} item</td>
-                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">{formatCurrency(transaction.total)}</td>
+                            <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                              {formatCurrency(transaction.total)}
+                            </td>
                             <td className="px-4 py-3 text-sm">
                               <span className={`px-2 py-1 rounded-full text-xs font-medium ${paymentColor(transaction.paymentMethod)}`}>
                                 {paymentLabel(transaction.paymentMethod)}
@@ -345,9 +393,8 @@ export default function LaporanPage() {
                           {/* Expanded detail row */}
                           {isExpanded && (
                             <tr className="bg-blue-50">
-                              <td colSpan={7} className="px-6 py-3">
+                              <td colSpan={8} className="px-6 py-3">
                                 <div className="rounded-lg overflow-hidden border border-blue-100">
-                                  {/* Product detail table */}
                                   <table className="w-full text-sm">
                                     <thead className="bg-blue-100">
                                       <tr>
@@ -372,7 +419,7 @@ export default function LaporanPage() {
                                         <td colSpan={3} className="px-4 py-2 text-right text-sm font-bold text-gray-700">Total</td>
                                         <td className="px-4 py-2 text-right text-sm font-bold text-blue-600">{formatCurrency(transaction.total)}</td>
                                       </tr>
-                                      {transaction.paymentMethod === 'cash' && (
+                                      {transaction.paymentMethod === 'cash' && transaction.change > 0 && (
                                         <>
                                           <tr>
                                             <td colSpan={3} className="px-4 py-1 text-right text-xs text-gray-500">Bayar</td>
@@ -398,6 +445,7 @@ export default function LaporanPage() {
               </table>
             </div>
           </Card>
+
         </div>
       </div>
     </ProtectedRoute>

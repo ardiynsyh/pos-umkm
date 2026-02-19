@@ -3,7 +3,6 @@
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import { Navbar } from '@/components/shared/Navbar';
 import { useState, useEffect } from 'react';
-import { db } from '@/lib/db/database';
 import { Card, Button, Input } from '@/components/ui';
 import {
   saveWAConfig,
@@ -14,16 +13,8 @@ import {
 import { QRCodeManager } from '@/components/settings/QRCodeManager';
 import { QRCodeSVG } from 'qrcode.react';
 import {
-  Save,
-  Settings as SettingsIcon,
-  MessageCircle,
-  Send,
-  CheckCircle,
-  XCircle,
-  ExternalLink,
-  Plus,
-  Trash2,
-  Download,
+  Save, Settings as SettingsIcon, MessageCircle, Send,
+  CheckCircle, XCircle, ExternalLink, Plus, Trash2, Download,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -111,7 +102,6 @@ function MejaManager() {
         Tambah meja dan generate QR Code. Customer scan QR untuk memesan langsung dari HP.
       </p>
 
-      {/* Form Tambah Meja */}
       <div className="flex gap-3">
         <input
           type="number"
@@ -136,7 +126,6 @@ function MejaManager() {
         </button>
       </div>
 
-      {/* Daftar Meja */}
       {loading ? (
         <p className="text-sm text-gray-400 text-center py-4">Memuat meja...</p>
       ) : tables.length === 0 ? (
@@ -149,17 +138,12 @@ function MejaManager() {
               <div key={table.id} className="border border-gray-200 rounded-xl p-3 text-center bg-gray-50">
                 <p className="font-bold text-gray-800 text-sm">{table.label}</p>
                 <p className="text-xs text-gray-400 mb-2">No. {table.number}</p>
-
-                {/* QR tersembunyi untuk download */}
                 <div className="hidden">
                   <QRCodeSVG id={`qr-dl-${table.id}`} value={orderUrl} size={256} />
                 </div>
-
-                {/* QR tampil */}
                 <div className="flex justify-center mb-2">
                   <QRCodeSVG value={orderUrl} size={100} />
                 </div>
-
                 <div className="flex gap-1 mt-2">
                   <button
                     onClick={() => setSelectedQR(table)}
@@ -187,7 +171,6 @@ function MejaManager() {
         </div>
       )}
 
-      {/* Modal Preview QR */}
       {selectedQR && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
           <div className="bg-white rounded-2xl p-8 text-center max-w-xs w-full shadow-xl">
@@ -228,34 +211,19 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
-    loadSettings();
+    // Load settings dari localStorage (tidak perlu database untuk config sederhana)
+    setCopyright(localStorage.getItem('setting_copyright') ?? '');
+    setStoreName(localStorage.getItem('setting_storeName') ?? 'Toko UMKM');
+    setVoiceEnabled(localStorage.getItem('setting_voiceEnabled') !== 'false');
     setWaConfig(loadWAConfig());
   }, []);
-
-  const loadSettings = async () => {
-    const settings = await db.settings.toArray();
-    settings.forEach((s) => {
-      if (s.key === 'copyright') setCopyright(s.value);
-      else if (s.key === 'storeName') setStoreName(s.value);
-      else if (s.key === 'voiceEnabled') setVoiceEnabled(s.value === 'true');
-    });
-  };
-
-  const saveSetting = async (key: string, value: string) => {
-    const existing = await db.settings.where('key').equals(key).first();
-    if (existing) {
-      await db.settings.update(existing.id!, { value, updatedAt: new Date() });
-    } else {
-      await db.settings.add({ key, value, updatedAt: new Date() });
-    }
-  };
 
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await saveSetting('copyright', copyright);
-      await saveSetting('storeName', storeName);
-      await saveSetting('voiceEnabled', voiceEnabled.toString());
+      localStorage.setItem('setting_copyright', copyright);
+      localStorage.setItem('setting_storeName', storeName);
+      localStorage.setItem('setting_voiceEnabled', voiceEnabled.toString());
       localStorage.setItem('voiceEnabled', voiceEnabled.toString());
       saveWAConfig(waConfig);
       alert('Pengaturan berhasil disimpan!');
@@ -295,21 +263,17 @@ export default function SettingsPage() {
       badgeColor: 'bg-green-100 text-green-700',
       desc: 'Support WA Business. Free tier tersedia.',
       link: 'https://fonnte.com',
-      steps: [
-        '1. Daftar di fonnte.com',
-        '2. Add Device → Scan QR dengan WA Business',
-        '3. Dashboard → API Key → Copy',
-      ],
+      steps: ['1. Daftar di fonnte.com', '2. Add Device → Scan QR dengan WA Business', '3. Dashboard → API Key → Copy'],
       fields: (
         <>
           <div>
-            <label htmlFor="fonnte-ownerPhone" className="block text-sm font-medium text-gray-700 mb-1">Nomor WA Business Owner</label>
-            <Input id="fonnte-ownerPhone" value={waConfig.ownerPhone || ''} onChange={(e) => setWaConfig({ ...waConfig, ownerPhone: e.target.value })} placeholder="628123456789" />
-            <p className="text-xs text-gray-500 mt-1">Format: 628xxxxxxxxx (kode negara 62, tanpa +)</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nomor WA Business Owner</label>
+            <Input value={waConfig.ownerPhone || ''} onChange={(e) => setWaConfig({ ...waConfig, ownerPhone: e.target.value })} placeholder="628123456789" />
+            <p className="text-xs text-gray-500 mt-1">Format: 628xxxxxxxxx</p>
           </div>
           <div>
-            <label htmlFor="fonnte-apiKey" className="block text-sm font-medium text-gray-700 mb-1">API Key Fonnte</label>
-            <Input id="fonnte-apiKey" type="password" value={waConfig.apiKey || ''} onChange={(e) => setWaConfig({ ...waConfig, apiKey: e.target.value })} placeholder="Paste API Key..." />
+            <label className="block text-sm font-medium text-gray-700 mb-1">API Key Fonnte</label>
+            <Input type="password" value={waConfig.apiKey || ''} onChange={(e) => setWaConfig({ ...waConfig, apiKey: e.target.value })} placeholder="Paste API Key..." />
           </div>
         </>
       ),
@@ -321,21 +285,16 @@ export default function SettingsPage() {
       badgeColor: 'bg-blue-100 text-blue-700',
       desc: 'Gratis, hanya untuk nomor sendiri.',
       link: 'https://www.callmebot.com/blog/free-api-whatsapp-messages/',
-      steps: [
-        '1. Simpan +34 644 66 64 45 di kontak',
-        '2. Kirim: "I allow callmebot to send me messages"',
-        '3. Catat API Key dari balasan',
-      ],
+      steps: ['1. Simpan +34 644 66 64 45 di kontak', '2. Kirim: "I allow callmebot to send me messages"', '3. Catat API Key dari balasan'],
       fields: (
         <>
           <div>
-            <label htmlFor="callmebot-ownerPhone" className="block text-sm font-medium text-gray-700 mb-1">Nomor WA Owner</label>
-            <Input id="callmebot-ownerPhone" value={waConfig.ownerPhone || ''} onChange={(e) => setWaConfig({ ...waConfig, ownerPhone: e.target.value })} placeholder="08123456789" />
-            <p className="text-xs text-gray-500 mt-1">Format: 08xxxxxxxxx</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nomor WA Owner</label>
+            <Input value={waConfig.ownerPhone || ''} onChange={(e) => setWaConfig({ ...waConfig, ownerPhone: e.target.value })} placeholder="08123456789" />
           </div>
           <div>
-            <label htmlFor="callmebot-apiKey" className="block text-sm font-medium text-gray-700 mb-1">API Key CallMeBot</label>
-            <Input id="callmebot-apiKey" type="password" value={waConfig.apiKey || ''} onChange={(e) => setWaConfig({ ...waConfig, apiKey: e.target.value })} placeholder="Contoh: 1234567" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">API Key CallMeBot</label>
+            <Input type="password" value={waConfig.apiKey || ''} onChange={(e) => setWaConfig({ ...waConfig, apiKey: e.target.value })} placeholder="Contoh: 1234567" />
           </div>
         </>
       ),
@@ -347,26 +306,20 @@ export default function SettingsPage() {
       badgeColor: 'bg-purple-100 text-purple-700',
       desc: 'Official Meta API. 1000 pesan/bln gratis.',
       link: 'https://developers.facebook.com/docs/whatsapp/cloud-api/get-started',
-      steps: [
-        '1. Buka developers.facebook.com',
-        '2. Buat App → WhatsApp → Cloud API',
-        '3. Daftarkan nomor WA Business',
-        '4. Copy Access Token & Phone Number ID',
-      ],
+      steps: ['1. Buka developers.facebook.com', '2. Buat App → WhatsApp → Cloud API', '3. Daftarkan nomor WA Business', '4. Copy Access Token & Phone Number ID'],
       fields: (
         <>
           <div>
-            <label htmlFor="wabusiness-phoneNumberId" className="block text-sm font-medium text-gray-700 mb-1">Phone Number ID</label>
-            <Input id="wabusiness-phoneNumberId" value={waConfig.phoneNumberId || ''} onChange={(e) => setWaConfig({ ...waConfig, phoneNumberId: e.target.value })} placeholder="Dari Meta Developer Console" />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number ID</label>
+            <Input value={waConfig.phoneNumberId || ''} onChange={(e) => setWaConfig({ ...waConfig, phoneNumberId: e.target.value })} placeholder="Dari Meta Developer Console" />
           </div>
           <div>
-            <label htmlFor="wabusiness-accessToken" className="block text-sm font-medium text-gray-700 mb-1">Access Token</label>
-            <Input id="wabusiness-accessToken" type="password" value={waConfig.accessToken || ''} onChange={(e) => setWaConfig({ ...waConfig, accessToken: e.target.value })} placeholder="EAAxxxxxxxx..." />
+            <label className="block text-sm font-medium text-gray-700 mb-1">Access Token</label>
+            <Input type="password" value={waConfig.accessToken || ''} onChange={(e) => setWaConfig({ ...waConfig, accessToken: e.target.value })} placeholder="EAAxxxxxxxx..." />
           </div>
           <div>
-            <label htmlFor="wabusiness-recipientPhone" className="block text-sm font-medium text-gray-700 mb-1">Nomor Tujuan (Owner)</label>
-            <Input id="wabusiness-recipientPhone" value={waConfig.recipientPhone || ''} onChange={(e) => setWaConfig({ ...waConfig, recipientPhone: e.target.value })} placeholder="628123456789" />
-            <p className="text-xs text-gray-500 mt-1">Format: 628xxxxxxxxx (tanpa + atau spasi)</p>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Nomor Tujuan (Owner)</label>
+            <Input value={waConfig.recipientPhone || ''} onChange={(e) => setWaConfig({ ...waConfig, recipientPhone: e.target.value })} placeholder="628123456789" />
           </div>
         </>
       ),
@@ -394,12 +347,12 @@ export default function SettingsPage() {
             <Card title="Pengaturan Umum">
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="storeName" className="block text-sm font-medium text-gray-700 mb-1">Nama Toko</label>
-                  <Input id="storeName" value={storeName} onChange={(e) => setStoreName(e.target.value)} placeholder="Toko UMKM" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Nama Toko</label>
+                  <Input value={storeName} onChange={(e) => setStoreName(e.target.value)} placeholder="Toko UMKM" />
                 </div>
                 <div>
-                  <label htmlFor="copyright" className="block text-sm font-medium text-gray-700 mb-1">Copyright / Created By</label>
-                  <Input id="copyright" value={copyright} onChange={(e) => setCopyright(e.target.value)} placeholder="Created by Your Company" />
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Copyright / Created By</label>
+                  <Input value={copyright} onChange={(e) => setCopyright(e.target.value)} placeholder="Created by Your Company" />
                 </div>
                 <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
                   <div>
@@ -416,7 +369,7 @@ export default function SettingsPage() {
               </div>
             </Card>
 
-            {/* ── Manajemen Meja & QR Order Customer ── */}
+            {/* ── Manajemen Meja ── */}
             <Card title="🪑 Manajemen Meja & QR Order Customer">
               <MejaManager />
             </Card>
@@ -475,46 +428,26 @@ export default function SettingsPage() {
 
                 <div className="space-y-4">{activeProvider.fields}</div>
 
+                <Button
+                  onClick={handleTestWA}
+                  disabled={isTesting}
+                  variant="outline"
+                  className="flex items-center gap-2"
+                >
+                  <Send className="w-4 h-4" />
+                  {isTesting ? 'Mengirim...' : 'Test Kirim WA'}
+                </Button>
+
                 {testResult && (
                   <div className={`flex items-start gap-2 p-3 rounded-lg border ${testResult.success ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
                     {testResult.success
                       ? <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
                       : <XCircle className="w-5 h-5 text-red-600 flex-shrink-0" />}
-                    <div>
-                      <p className={`text-sm font-medium ${testResult.success ? 'text-green-700' : 'text-red-700'}`}>
-                        {testResult.success ? '✅ Berhasil!' : '❌ Gagal!'}
-                      </p>
-                      <p className={`text-xs mt-0.5 ${testResult.success ? 'text-green-600' : 'text-red-600'}`}>{testResult.message}</p>
-                    </div>
+                    <p className={`text-sm font-medium ${testResult.success ? 'text-green-700' : 'text-red-700'}`}>
+                      {testResult.message}
+                    </p>
                   </div>
                 )}
-
-                <Button variant="outline" onClick={handleTestWA} disabled={isTesting} className="w-full flex items-center justify-center gap-2">
-                  <Send className="w-4 h-4" />
-                  {isTesting ? 'Mengirim...' : 'Kirim Pesan Test ke WhatsApp'}
-                </Button>
-
-                <div>
-                  <p className="text-xs font-medium text-gray-600 mb-2">Preview pesan:</p>
-                  <div className="bg-gray-900 text-green-400 text-xs p-4 rounded-lg font-mono overflow-auto">
-                    <pre className="whitespace-pre-wrap">{`🛒 *NOTIFIKASI PENJUALAN*
-🏪 ${storeName || 'Toko UMKM'}
-━━━━━━━━━━━━━━━━━━
-📋 No: TRX20260217001
-📅 17/02/2026 14:30
-👤 Kasir: Kasir Demo
-━━━━━━━━━━━━━━━━━━
-*Item Pembelian:*
-  • Indomie Goreng x2 = Rp 6.000
-━━━━━━━━━━━━━━━━━━
-💰 Total: *Rp 6.000*
-💳 Metode: Tunai
-💵 Bayar: Rp 10.000
-💱 Kembalian: Rp 4.000
-━━━━━━━━━━━━━━━━━━
-✅ Transaksi berhasil!`}</pre>
-                  </div>
-                </div>
               </div>
             </Card>
 

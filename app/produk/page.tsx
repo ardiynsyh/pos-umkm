@@ -3,28 +3,51 @@
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import { Navbar } from '@/components/shared/Navbar';
 import { useState, useEffect } from 'react';
-import { db, Product } from '@/lib/db/database';
+import { Product } from '@/lib/db/database';
 import { Button, Input } from '@/components/ui';
 import { ProductTable } from '@/components/shared/ProductTable';
 import { ProductFormModal } from '@/components/shared/ProductFormModal';
 import { Plus, Search } from 'lucide-react';
+
+// Helper: mapping produk dari Prisma ke format Product Dexie
+function mapPrismaToProduct(p: any): Product {
+  return {
+    id: p.id,                          // string dari Prisma
+    name: p.nama,
+    barcode: p.barcode ?? '',
+    price: p.hargaJual,
+    stock: p.stok,
+    category: p.category?.nama ?? 'Umum',
+    image: p.foto ?? undefined,
+    createdAt: new Date(p.createdAt),
+    updatedAt: new Date(p.updatedAt),
+  } as unknown as Product;
+}
 
 export default function ProdukPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadProducts();
   }, []);
 
   const loadProducts = async () => {
-    const allProducts = await db.products.toArray();
-    const validProducts = allProducts.filter(
-      (p) => p && p.name && typeof p.name === 'string'
-    );
-    setProducts(validProducts);
+    try {
+      setLoading(true);
+      const res = await fetch('/api/products');
+      if (!res.ok) throw new Error('Gagal fetch produk');
+      const data = await res.json();
+      const mapped = (data.products ?? []).map(mapPrismaToProduct);
+      setProducts(mapped);
+    } catch (error) {
+      console.error('Gagal load produk:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const filteredProducts = products.filter((product) => {
@@ -45,10 +68,16 @@ export default function ProdukPage() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: number | string) => {
     if (confirm('Apakah Anda yakin ingin menghapus produk ini?')) {
-      await db.products.delete(id);
-      loadProducts();
+      try {
+        const res = await fetch(`/api/products/${id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Gagal hapus produk');
+        loadProducts();
+      } catch (error) {
+        console.error('Gagal hapus produk:', error);
+        alert('Terjadi kesalahan saat menghapus produk');
+      }
     }
   };
 
@@ -61,7 +90,7 @@ export default function ProdukPage() {
   return (
     <ProtectedRoute>
       <Navbar />
-      
+
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-7xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between mb-6">
@@ -86,12 +115,19 @@ export default function ProdukPage() {
             </div>
           </div>
 
-          {/* Product Table */}
-          <ProductTable
-            products={filteredProducts}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-          />
+          {/* Loading state */}
+          {loading ? (
+            <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+              <div className="w-10 h-10 border-4 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-gray-500 text-sm">Memuat produk...</p>
+            </div>
+          ) : (
+            <ProductTable
+              products={filteredProducts}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
+            />
+          )}
         </div>
       </div>
 

@@ -5,14 +5,8 @@ import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/authStore';
 import { Button } from '@/components/ui';
 import {
-  Home,
-  LogOut,
-  User,
-  Settings,
-  ShoppingCart,
-  Package,
-  BarChart3,
-  Users,
+  Home, LogOut, User, Settings, ShoppingCart,
+  Package, BarChart3, Users, ClipboardList,
 } from 'lucide-react';
 
 export const Navbar = () => {
@@ -32,11 +26,18 @@ export const Navbar = () => {
     { href: '/laporan', label: 'Laporan', icon: BarChart3 },
   ];
 
-  // Add owner-only menu items
-  if (user?.role === 'owner') {
+  // Menu khusus ADMIN dan MANAGER
+  if (user?.role === 'ADMIN' || user?.role === 'MANAGER') {
     navItems.push(
-      { href: '/users', label: 'User Management', icon: Users },
-      { href: '/settings', label: 'Settings', icon: Settings }
+      { href: '/kasir/pesanan', label: 'Pesanan', icon: ClipboardList },
+    );
+  }
+
+  // Menu khusus ADMIN
+  if (user?.role === 'ADMIN') {
+    navItems.push(
+      { href: '/users', label: 'Users', icon: Users },
+      { href: '/settings', label: 'Settings', icon: Settings },
     );
   }
 
@@ -44,7 +45,8 @@ export const Navbar = () => {
     <nav className="bg-white shadow-sm border-b">
       <div className="max-w-7xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
-          {/* Logo & Brand */}
+
+          {/* Logo */}
           <Link href="/dashboard" className="flex items-center gap-2">
             <div className="bg-blue-600 p-2 rounded-lg">
               <ShoppingCart className="w-5 h-5 text-white" />
@@ -57,15 +59,12 @@ export const Navbar = () => {
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.href;
-              
               return (
                 <Link
                   key={item.href}
                   href={item.href}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-gray-600 hover:bg-gray-50'
+                    isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-600 hover:bg-gray-50'
                   }`}
                 >
                   <Icon className="w-4 h-4" />
@@ -80,17 +79,11 @@ export const Navbar = () => {
             <div className="hidden md:flex items-center gap-2 text-sm">
               <User className="w-4 h-4 text-gray-500" />
               <div>
-                <p className="font-medium text-gray-800">{user?.name}</p>
-                <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
+                <p className="font-medium text-gray-800">{user?.nama}</p>  {/* ← nama bukan name */}
+                <p className="text-xs text-gray-500">{user?.role}</p>
               </div>
             </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLogout}
-              className="flex items-center gap-2"
-            >
+            <Button variant="outline" size="sm" onClick={handleLogout} className="flex items-center gap-2">
               <LogOut className="w-4 h-4" />
               <span className="hidden md:inline">Logout</span>
             </Button>
@@ -104,15 +97,12 @@ export const Navbar = () => {
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
-            
             return (
               <Link
                 key={item.href}
                 href={item.href}
                 className={`flex flex-col items-center gap-1 px-3 py-2 rounded-lg whitespace-nowrap ${
-                  isActive
-                    ? 'bg-blue-50 text-blue-600'
-                    : 'text-gray-600'
+                  isActive ? 'bg-blue-50 text-blue-600' : 'text-gray-600'
                 }`}
               >
                 <Icon className="w-4 h-4" />

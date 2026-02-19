@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { db } from '@/lib/db/database';
 import { useAuthStore } from '@/lib/store/authStore';
 import { Input, Button } from '@/components/ui';
 import { LogIn, Store } from 'lucide-react';
@@ -11,24 +10,9 @@ export default function LoginPage() {
   const router = useRouter();
   const login = useAuthStore((state) => state.login);
 
-  const [formData, setFormData] = useState({
-    username: '',
-    password: '',
-  });
+  const [formData, setFormData] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isInitializing, setIsInitializing] = useState(true);
-
-  // Initialize database on mount
-  useEffect(() => {
-    (async () => {
-      try {
-        await db.seedInitialData();
-      } finally {
-        setIsInitializing(false);
-      }
-    })();
-  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,35 +20,24 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const user = await db.users
-        .where('username')
-        .equals(formData.username)
-        .first();
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
 
-      if (!user) {
-        setError('Username tidak ditemukan');
-        setIsLoading(false);
+      const data = await res.json();
+
+      if (!res.ok) {
+        setError(data.message || 'Login gagal');
         return;
       }
 
-      if (!user.isActive) {
-        setError('Akun Anda tidak aktif. Hubungi owner.');
-        setIsLoading(false);
-        return;
-      }
-
-      if (user.password !== formData.password) {
-        setError('Password salah');
-        setIsLoading(false);
-        return;
-      }
-
-      // Login successful
-      login(user);
+      login(data.user);
       router.push('/dashboard');
     } catch (err) {
-      console.error('Login error:', err);
       setError('Terjadi kesalahan saat login');
+    } finally {
       setIsLoading(false);
     }
   };
@@ -72,7 +45,6 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="max-w-md w-full">
-        {/* Logo & Title */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-600 rounded-full mb-4">
             <Store className="w-8 h-8 text-white" />
@@ -81,20 +53,18 @@ export default function LoginPage() {
           <p className="text-gray-600">Silakan login untuk melanjutkan</p>
         </div>
 
-        {/* Login Form */}
         <div className="bg-white rounded-2xl shadow-xl p-8">
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 mb-1">
-                Username
+              <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+                Email
               </label>
               <Input
-                id="username"
-                type="text"
-                value={formData.username}
-                onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                placeholder="Masukkan username"
-                disabled={isInitializing}
+                id="email"
+                type="email"
+                value={formData.email}
+                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                placeholder="email@example.com"
                 required
               />
             </div>
@@ -109,7 +79,6 @@ export default function LoginPage() {
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 placeholder="Masukkan password"
-                disabled={isInitializing}
                 required
               />
             </div>
@@ -132,7 +101,6 @@ export default function LoginPage() {
           </form>
         </div>
 
-        {/* Copyright */}
         <p className="text-center text-gray-500 text-sm mt-6">
           © 2026 Created By Sagara. All rights reserved.
         </p>

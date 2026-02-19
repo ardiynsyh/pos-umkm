@@ -17,7 +17,6 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const { user, isAuthenticated, _hasHydrated } = useAuthStore();
 
   useEffect(() => {
-    // Tunggu sampai Zustand selesai hydrate dari localStorage
     if (!_hasHydrated) return;
 
     if (!isAuthenticated) {
@@ -25,12 +24,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       return;
     }
 
-    if (requireOwner && user?.role !== 'owner') {
+    if (requireOwner && user?.role !== 'ADMIN') { // ← ubah 'owner' → 'ADMIN'
       router.push('/dashboard');
     }
   }, [_hasHydrated, isAuthenticated, user, router, requireOwner]);
 
-  // Tampilkan loading selama hydration atau belum authenticated
   if (!_hasHydrated || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -42,7 +40,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     );
   }
 
-  if (requireOwner && user?.role !== 'owner') {
+  if (requireOwner && user?.role !== 'ADMIN') { // ← ubah 'owner' → 'ADMIN'
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">

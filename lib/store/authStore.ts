@@ -2,14 +2,23 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { User } from '@/lib/db/database';
+
+// Type sesuai Prisma schema (bukan Dexie)
+export interface AuthUser {
+  id: string;
+  nama: string;
+  email: string;
+  role: 'ADMIN' | 'KASIR' | 'MANAGER';
+  outletId?: string | null;
+  outlet?: { id: string; nama: string } | null;
+}
 
 interface AuthState {
-  user: User | null;
+  user: AuthUser | null;
   isAuthenticated: boolean;
   _hasHydrated: boolean;
   setHasHydrated: (state: boolean) => void;
-  login: (user: User) => void;
+  login: (user: AuthUser) => void;
   logout: () => void;
 }
 
@@ -26,7 +35,6 @@ export const useAuthStore = create<AuthState>()(
     {
       name: 'pos-auth-storage',
       onRehydrateStorage: () => (state) => {
-        // Dipanggil setelah Zustand selesai baca localStorage
         state?.setHasHydrated(true);
       },
     }

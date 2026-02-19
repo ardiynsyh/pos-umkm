@@ -37,6 +37,7 @@ model Outlet {
   users        User[]
   products     Product[]
   transactions Transaction[]
+  tables       Table[]       // ← TAMBAH INI
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
@@ -142,9 +143,11 @@ model TransactionItem {
 
 model Table {
   id        String   @id @default(cuid())
-  number    Int      @unique   // nomor meja
-  label     String             // "Meja 1", "Meja 2", dst
+  number    Int      @unique
+  label     String
   isActive  Boolean  @default(true)
+  outletId  String                                                    // ← TAMBAH INI
+  outlet    Outlet   @relation(fields: [outletId], references: [id]) // ← TAMBAH INI
   orders    Order[]
   createdAt DateTime @default(now())
 }
@@ -189,4 +192,26 @@ enum PaymentStatus {
   UNPAID
   PAID
   REFUNDED
+}
+
+model Pengeluaran {
+  id         String   @id @default(cuid())
+  tanggal    DateTime
+  kategori   String
+  keterangan String
+  jumlah     Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@map("pengeluaran")
+}
+
+model paymentQR {
+  id            Int      @id @default(autoincrement())
+  provider      String
+  qrCode        String
+  accountNumber String
+  accountName   String
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
 }
