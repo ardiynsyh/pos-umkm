@@ -109,14 +109,14 @@ export const ProductTable: React.FC<ProductTableProps> = ({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => onEdit(product)}
+                      onClick={() => onEdit(Number(product.id!))}
                     >
                       <Edit className="w-4 h-4" />
                     </Button>
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => onDelete(product.id!)}
+                      onClick={() => onDelete(Number(product.id!))}
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
