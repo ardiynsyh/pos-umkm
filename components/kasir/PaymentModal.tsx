@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Modal, Button, Input } from '@/components/ui';
 import { CartItem } from '@/hooks/useCart';
-import { db, TransactionItem, Transaction } from '@/lib/db/database';
+import { Transaction } from '@/lib/db/database';
 import { formatCurrency, generateTransactionNumber, formatDateTime } from '@/lib/utils/format';
 import { speakIndonesian, voiceMessages } from '@/lib/utils/voice';
 import { sendWhatsAppNotification } from '@/lib/utils/whatsapp';
@@ -44,85 +44,109 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setIsProcessing(true);
 
     try {
-      const transactionItems: TransactionItem[] = cartItems.map((item) => ({
-        productId: item.id!,
-        productName: item.name,
+      const nomorTransaksi = generateTransactionNumber();
+      const uangDibayar = parseFloat(paymentAmount) || total;
+      const kembalian = paymentMethod === 'cash' ? Math.max(0, change) : 0;
+
+      const items = cartItems.map((item) => ({
+        productId: item.id,
+        nama: item.name,
         quantity: item.quantity,
-        price: item.price,
+        hargaSatuan: item.price,
         subtotal: item.subtotal,
       }));
 
-      const transaction: Transaction = {
-        transactionNumber: generateTransactionNumber(),
-        items: transactionItems,
+      // Ambil outletId dari API
+      const outletRes = await fetch('/api/outlets');
+      const outlets = await outletRes.json();
+      const outletId = outlets?.[0]?.id || outlets?.data?.[0]?.id;
+
+      const res = await fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nomorTransaksi,
+          total,
+          diskon: 0,
+          pajak: 0,
+          totalBayar: total,
+          uangDibayar,
+          kembalian,
+          metodePembayaran: paymentMethod,
+          items,
+          outletId,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Gagal memproses pembayaran');
+      }
+
+      const { transaction } = await res.json();
+
+      // Buat objek Transaction untuk receipt (kompatibel dengan tipe lama)
+      const completedTx: Transaction = {
+        id: transaction.id,
+        transactionNumber: nomorTransaksi,
+        items: cartItems.map((item) => ({
+          productId: item.id!,
+          productName: item.name,
+          quantity: item.quantity,
+          price: item.price,
+          subtotal: item.subtotal,
+        })),
         subtotal: total,
         tax: 0,
         discount: 0,
         total,
         paymentMethod,
-        paymentAmount: parseFloat(paymentAmount) || total,
-        change: paymentMethod === 'cash' ? Math.max(0, change) : 0,
+        paymentAmount: uangDibayar,
+        change: kembalian,
         cashierName: cashierName || 'Kasir',
         createdAt: new Date(),
       };
 
-      const transactionId = await db.transactions.add(transaction);
-      transaction.id = transactionId as number;
-
-      // Update stock
-      for (const item of cartItems) {
-        const product = await db.products.get(item.id!);
-        if (product) {
-          await db.products.update(item.id!, {
-            stock: product.stock - item.quantity,
-            updatedAt: new Date(),
-          });
-        }
-      }
-
-      // ── Voice Notification ───────────────────────────────
-      if (paymentMethod === 'cash' && change > 0) {
-        speakIndonesian(voiceMessages.paymentCash(total, change));
+      // Voice notification
+      if (paymentMethod === 'cash' && kembalian > 0) {
+        speakIndonesian(voiceMessages.paymentCash(total, kembalian));
       } else {
         speakIndonesian(voiceMessages.paymentSuccess(total));
       }
 
-      // ── WhatsApp Notification ────────────────────────────
-      const storeName =
-        (await db.settings.where('key').equals('storeName').first())?.value ||
-        'Toko UMKM';
+      // WhatsApp notification
+      try {
+        const settingsRes = await fetch('/api/settings');
+        const settings = await settingsRes.json();
+        const storeName = Array.isArray(settings)
+          ? settings.find((s: any) => s.key === 'storeName')?.value
+          : settings?.storeName || 'Toko UMKM';
 
-      const waResult = await sendWhatsAppNotification(transaction, storeName);
-      setWaSent(waResult.success);
-      if (!waResult.success && waResult.message !== 'WhatsApp belum dikonfigurasi' && waResult.message !== 'WhatsApp notification dinonaktifkan') {
-        console.warn('WA:', waResult.message);
+        const waResult = await sendWhatsAppNotification(completedTx, storeName || 'Toko UMKM');
+        setWaSent(waResult.success);
+      } catch {
+        setWaSent(false);
       }
 
-      setCompletedTransaction(transaction);
+      setCompletedTransaction(completedTx);
       setShowReceipt(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Payment error:', error);
-      alert('Terjadi kesalahan saat memproses pembayaran');
+      alert(error.message || 'Terjadi kesalahan saat memproses pembayaran');
       setIsProcessing(false);
     }
   };
 
-  const handlePrint = () => {
-    window.print();
-  };
+  const handlePrint = () => window.print();
 
   const handleFinish = () => {
     setShowReceipt(false);
     setCompletedTransaction(null);
     setWaSent(null);
     onPaymentComplete();
-    resetForm();
-    setIsProcessing(false);
-  };
-
-  const resetForm = () => {
     setPaymentMethod('cash');
     setPaymentAmount('');
+    setIsProcessing(false);
   };
 
   const quickAmounts = [50000, 100000, 150000, 200000];
@@ -132,23 +156,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     return (
       <Modal isOpen={true} onClose={handleFinish} title="Struk Pembayaran" size="md">
         <div className="space-y-4">
-          {/* WA Status */}
           {waSent !== null && (
-            <div
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm print:hidden ${
-                waSent
-                  ? 'bg-green-50 text-green-700 border border-green-200'
-                  : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
-              }`}
-            >
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm print:hidden ${
+              waSent ? 'bg-green-50 text-green-700 border border-green-200' : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
+            }`}>
               <MessageCircle className="w-4 h-4 flex-shrink-0" />
-              {waSent
-                ? '✅ Notifikasi WhatsApp terkirim ke owner'
-                : '⚠️ WhatsApp tidak terkirim (cek pengaturan)'}
+              {waSent ? '✅ Notifikasi WhatsApp terkirim ke owner' : '⚠️ WhatsApp tidak terkirim (cek pengaturan)'}
             </div>
           )}
 
-          {/* Receipt Content */}
           <div id="receipt" className="bg-white p-6 border-2 border-dashed border-gray-300 rounded-lg">
             <div className="text-center border-b pb-4 mb-4">
               <h2 className="text-xl font-bold">TOKO UMKM</h2>
@@ -259,15 +275,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             <span>Total</span>
             <span className="text-blue-600">{formatCurrency(total)}</span>
           </div>
-          {cashierName && (
-            <p className="text-xs text-gray-500 mt-1">Kasir: {cashierName}</p>
-          )}
+          {cashierName && <p className="text-xs text-gray-500 mt-1">Kasir: {cashierName}</p>}
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Metode Pembayaran
-          </label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Metode Pembayaran</label>
           <div className="grid grid-cols-3 gap-2">
             {[
               { key: 'cash', label: 'Tunai', icon: Banknote },
@@ -278,9 +290,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 key={key}
                 onClick={() => setPaymentMethod(key as any)}
                 className={`p-3 rounded-lg border-2 flex flex-col items-center gap-1 transition-colors ${
-                  paymentMethod === key
-                    ? 'border-blue-600 bg-blue-50 text-blue-600'
-                    : 'border-gray-200 hover:border-gray-300'
+                  paymentMethod === key ? 'border-blue-600 bg-blue-50 text-blue-600' : 'border-gray-200 hover:border-gray-300'
                 }`}
               >
                 <Icon className="w-6 h-6" />
@@ -327,9 +337,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         )}
 
         <div className="flex gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} className="flex-1">
-            Batal
-          </Button>
+          <Button variant="outline" onClick={onClose} className="flex-1">Batal</Button>
           <Button
             onClick={handlePayment}
             disabled={isProcessing || (paymentMethod === 'cash' && (!paymentAmount || parseFloat(paymentAmount) <= 0 || change < 0))}
