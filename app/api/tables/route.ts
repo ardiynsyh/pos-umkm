@@ -29,7 +29,7 @@ export async function POST(req: Request) {
     const table = await prisma.table.upsert({
       where: { number },
       update: { label, isActive: true },
-      create: { number, label, isActive: true },
+      create: { number, label, isActive: true, outletId: body.outletId },
     });
     return NextResponse.json(table);
   } catch (error: any) {
