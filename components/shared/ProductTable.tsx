@@ -8,8 +8,8 @@ import { Edit, Trash2, Package } from 'lucide-react';
 
 interface ProductTableProps {
   products: Product[];
-  onEdit: (product: Product) => void;
-  onDelete: (id: number) => void;
+  onEdit: (product: Product) => void;  // Menerima Product untuk edit
+  onDelete: (id: number) => void;       // Menerima number (id) untuk delete
 }
 
 export const ProductTable: React.FC<ProductTableProps> = ({
@@ -26,6 +26,23 @@ export const ProductTable: React.FC<ProductTableProps> = ({
       </div>
     );
   }
+
+  // Fungsi helper untuk handle delete dengan aman
+  const handleDelete = (productId: number | string | undefined) => {
+    if (productId === undefined) {
+      console.error('Product ID is undefined');
+      return;
+    }
+    
+    const id = typeof productId === 'string' ? parseInt(productId, 10) : productId;
+    
+    if (isNaN(id)) {
+      console.error('Invalid product ID:', productId);
+      return;
+    }
+    
+    onDelete(id);
+  };
 
   return (
     <div className="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -109,14 +126,14 @@ export const ProductTable: React.FC<ProductTableProps> = ({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => onEdit(Number(product.id!))}
+                      onClick={() => onEdit(product)}  // Langsung kirim object product
                     >
                       <Edit className="w-4 h-4" />
                     </Button>
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => onDelete(Number(product.id!))}
+                      onClick={() => handleDelete(product.id)}  // Gunakan helper function
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
