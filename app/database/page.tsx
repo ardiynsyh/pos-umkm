@@ -3,24 +3,12 @@
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import { Navbar } from '@/components/shared/Navbar';
 import { useState, useEffect } from 'react';
-import { db } from '@/lib/db/database';
-import { Card, Button } from '@/components/ui';
+import { Card } from '@/components/ui';
 import {
-  Database,
-  Download,
-  Upload,
-  Trash2,
-  RefreshCw,
-  Eye,
-  Lock,
-  Unlock,
-  AlertTriangle,
-  CheckCircle,
-  Shield,
+  Database, Download, RefreshCw, Eye, Lock, Unlock,
+  AlertTriangle, CheckCircle, Shield,
 } from 'lucide-react';
 
-// ⚠️ PASSWORD MASTER - HANYA PEMILIK APLIKASI YANG TAHU
-// GANTI PASSWORD INI DENGAN PASSWORD ANDA SENDIRI!
 const MASTER_PASSWORD = '@Login123';
 
 export default function DatabasePage() {
@@ -29,60 +17,32 @@ export default function DatabasePage() {
   const [passwordError, setPasswordError] = useState('');
   const [stats, setStats] = useState({ products: 0, transactions: 0, categories: 0, users: 0 });
   const [isExporting, setIsExporting] = useState(false);
-  const [isResetting, setIsResetting] = useState(false);
   const [lastAction, setLastAction] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Block DevTools untuk Owner/Kasir
   useEffect(() => {
-    const handleContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      alert('⚠️ Fitur ini dinonaktifkan untuk keamanan!');
-    };
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key === 'F12' ||
-        (e.ctrlKey && e.shiftKey && ['I', 'J', 'C'].includes(e.key.toUpperCase())) ||
-        (e.ctrlKey && e.key.toLowerCase() === 'u')
-      ) {
-        e.preventDefault();
-        alert('⚠️ Akses ditolak! Hanya pemilik aplikasi yang dapat mengakses.');
-      }
-    };
-
-    const detectDevTools = () => {
-      const widthThreshold = window.outerWidth - window.innerWidth > 160;
-      const heightThreshold = window.outerHeight - window.innerHeight > 160;
-      if (widthThreshold || heightThreshold) {
-        document.body.innerHTML = `
-          <div style="display:flex;align-items:center;justify-content:center;height:100vh;background:#1e1e1e;color:#fff;font-family:monospace;">
-            <div style="text-align:center;">
-              <h1 style="color:#ef4444;font-size:3rem;">🚫 ACCESS DENIED</h1>
-              <p style="font-size:1.2rem;margin-top:1rem;">DevTools terdeteksi!</p>
-              <p>Tutup DevTools dan refresh halaman.</p>
-            </div>
-          </div>
-        `;
-      }
-    };
-
-    document.addEventListener('contextmenu', handleContextMenu);
-    document.addEventListener('keydown', handleKeyDown);
-    const interval = setInterval(detectDevTools, 1000);
-
-    return () => {
-      document.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('keydown', handleKeyDown);
-      clearInterval(interval);
-    };
+    const unlocked = sessionStorage.getItem('dbUnlocked');
+    if (unlocked && Date.now() < parseInt(unlocked)) {
+      setIsUnlocked(true);
+    }
   }, []);
 
   const loadStats = async () => {
-    const products = await db.products.count();
-    const transactions = await db.transactions.count();
-    const categories = await db.categories.count();
-    const users = await db.users.count();
-    setStats({ products, transactions, categories, users });
+    try {
+      const [products, transactions, categories, users] = await Promise.all([
+        fetch('/api/products').then(r => r.json()),
+        fetch('/api/transactions').then(r => r.json()),
+        fetch('/api/categories').then(r => r.json()),
+        fetch('/api/users').then(r => r.json()),
+      ]);
+      setStats({
+        products: Array.isArray(products) ? products.length : (products?.data?.length ?? 0),
+        transactions: Array.isArray(transactions) ? transactions.length : (transactions?.data?.length ?? 0),
+        categories: Array.isArray(categories) ? categories.length : (categories?.data?.length ?? 0),
+        users: Array.isArray(users) ? users.length : (users?.data?.length ?? 0),
+      });
+    } catch {
+      setLastAction({ type: 'error', message: 'Gagal memuat statistik database' });
+    }
   };
 
   useEffect(() => {
@@ -93,7 +53,7 @@ export default function DatabasePage() {
     if (passwordInput === MASTER_PASSWORD) {
       setIsUnlocked(true);
       setPasswordError('');
-      const expiry = Date.now() + 60 * 60 * 1000; // 1 hour
+      const expiry = Date.now() + 60 * 60 * 1000;
       sessionStorage.setItem('dbUnlocked', expiry.toString());
     } else {
       setPasswordError('⚠️ Password salah! Akses ditolak.');
@@ -101,30 +61,21 @@ export default function DatabasePage() {
     }
   };
 
-  useEffect(() => {
-    const unlocked = sessionStorage.getItem('dbUnlocked');
-    if (unlocked && Date.now() < parseInt(unlocked)) {
-      setIsUnlocked(true);
-    }
-  }, []);
-
   const handleExport = async () => {
     setIsExporting(true);
     try {
+      const [products, transactions, categories, users] = await Promise.all([
+        fetch('/api/products').then(r => r.json()),
+        fetch('/api/transactions').then(r => r.json()),
+        fetch('/api/categories').then(r => r.json()),
+        fetch('/api/users').then(r => r.json()),
+      ]);
       const data = {
-        version: '1.0',
+        version: '2.0',
         exportDate: new Date().toISOString(),
-        data: {
-          products: await db.products.toArray(),
-          transactions: await db.transactions.toArray(),
-          categories: await db.categories.toArray(),
-          users: await db.users.toArray(),
-          settings: await db.settings.toArray(),
-          paymentQRs: await db.paymentQRs.toArray(),
-        },
+        data: { products, transactions, categories, users },
       };
-      const json = JSON.stringify(data, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -139,88 +90,32 @@ export default function DatabasePage() {
     }
   };
 
-  const handleImport = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    input.onchange = async (e: any) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      try {
-        const text = await file.text();
-        const backup = JSON.parse(text);
-        if (!backup.data) throw new Error('Format backup tidak valid');
-        if (!confirm(`Import ${backup.data.products?.length || 0} produk, ${backup.data.transactions?.length || 0} transaksi?`)) return;
-        await db.products.clear();
-        await db.transactions.clear();
-        await db.categories.clear();
-        await db.users.clear();
-        await db.settings.clear();
-        await db.paymentQRs.clear();
-        if (backup.data.products?.length) await db.products.bulkAdd(backup.data.products);
-        if (backup.data.transactions?.length) await db.transactions.bulkAdd(backup.data.transactions);
-        if (backup.data.categories?.length) await db.categories.bulkAdd(backup.data.categories);
-        if (backup.data.users?.length) await db.users.bulkAdd(backup.data.users);
-        if (backup.data.settings?.length) await db.settings.bulkAdd(backup.data.settings);
-        if (backup.data.paymentQRs?.length) await db.paymentQRs.bulkAdd(backup.data.paymentQRs);
-        setLastAction({ type: 'success', message: 'Import berhasil!' });
-        setTimeout(() => window.location.reload(), 1500);
-      } catch (error: any) {
-        setLastAction({ type: 'error', message: `Import gagal: ${error.message}` });
-      }
-    };
-    input.click();
-  };
-
-  const handleReset = async () => {
-    if (prompt('⚠️ Ketik "RESET" untuk menghapus semua data:') !== 'RESET') {
-      alert('Reset dibatalkan');
-      return;
-    }
-    setIsResetting(true);
+  const handleViewData = async (endpoint: string, label: string) => {
     try {
-      await db.delete();
-      setLastAction({ type: 'success', message: 'Database berhasil direset!' });
-      setTimeout(() => window.location.reload(), 2000);
-    } catch {
-      setLastAction({ type: 'error', message: 'Reset gagal' });
-      setIsResetting(false);
-    }
-  };
-
-  const handleViewData = async (table: string) => {
-    let data: any[] = [];
-    switch (table) {
-      case 'products': data = await db.products.toArray(); break;
-      case 'transactions': data = await db.transactions.toArray(); break;
-      case 'categories': data = await db.categories.toArray(); break;
-      case 'users': data = await db.users.toArray(); break;
-    }
-    const json = JSON.stringify(data, null, 2);
-    const w = window.open('', '_blank');
-    if (w) {
-      w.document.write(`<html><head><title>${table.toUpperCase()}</title><style>body{font-family:monospace;padding:20px;background:#1e1e1e;color:#d4d4d4;}pre{white-space:pre-wrap;}</style></head><body><h1>${table.toUpperCase()} (${data.length} records)</h1><pre>${json}</pre></body></html>`);
-    }
-  };
-
-  const handleClearTable = async (table: string, label: string) => {
-    if (!confirm(`Hapus semua data di tabel "${label}"?`)) return;
-    try {
-      switch (table) {
-        case 'products': await db.products.clear(); break;
-        case 'transactions': await db.transactions.clear(); break;
-        case 'categories': await db.categories.clear(); break;
-        case 'users': await db.users.clear(); break;
+      const res = await fetch(`/api/${endpoint}`);
+      const data = await res.json();
+      const records = Array.isArray(data) ? data : (data?.data ?? data);
+      const w = window.open('', '_blank');
+      if (w) {
+        w.document.write(`
+          <html>
+            <head>
+              <title>${label.toUpperCase()}</title>
+              <style>body{font-family:monospace;padding:20px;background:#1e1e1e;color:#d4d4d4;}pre{white-space:pre-wrap;}</style>
+            </head>
+            <body>
+              <h1>${label.toUpperCase()} (${records.length} records)</h1>
+              <pre>${JSON.stringify(records, null, 2)}</pre>
+            </body>
+          </html>
+        `);
       }
-      setLastAction({ type: 'success', message: `Tabel ${label} berhasil dikosongkan` });
-      loadStats();
     } catch {
-      setLastAction({ type: 'error', message: `Gagal menghapus tabel ${label}` });
+      setLastAction({ type: 'error', message: `Gagal memuat data ${label}` });
     }
   };
 
   // ─── LOCK SCREEN ─────────────────────────────────────────────────────────
-
   if (!isUnlocked) {
     return (
       <ProtectedRoute requireOwner>
@@ -243,7 +138,7 @@ export default function DatabasePage() {
                     type="password"
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleUnlock()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
                     placeholder="Masukkan password master"
                     className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -265,7 +160,6 @@ export default function DatabasePage() {
                     <ul className="space-y-1 text-xs">
                       <li>• Password hanya untuk pemilik aplikasi</li>
                       <li>• Jangan bagikan ke owner/kasir</li>
-                      <li>• DevTools dinonaktifkan</li>
                       <li>• Session expired dalam 1 jam</li>
                     </ul>
                   </div>
@@ -279,7 +173,6 @@ export default function DatabasePage() {
   }
 
   // ─── UNLOCKED VIEW ───────────────────────────────────────────────────────
-
   const tables = [
     { key: 'products', label: 'Produk', count: stats.products, icon: '📦' },
     { key: 'transactions', label: 'Transaksi', count: stats.transactions, icon: '🧾' },
@@ -302,39 +195,51 @@ export default function DatabasePage() {
                 <p className="text-sm text-green-600">✓ Unlocked (Admin Mode)</p>
               </div>
             </div>
-            <button
-              onClick={() => {
-                sessionStorage.removeItem('dbUnlocked');
-                setIsUnlocked(false);
-              }}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg text-gray-700 transition-colors"
-            >
-              <Lock className="w-4 h-4" />
-              Lock
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={loadStats}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg text-gray-700 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Refresh
+              </button>
+              <button
+                onClick={() => { sessionStorage.removeItem('dbUnlocked'); setIsUnlocked(false); }}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg text-gray-700 transition-colors"
+              >
+                <Lock className="w-4 h-4" />
+                Lock
+              </button>
+            </div>
           </div>
+
           {lastAction && (
             <div className={`mb-6 p-4 rounded-lg flex items-center gap-3 ${lastAction.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
               {lastAction.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
               <p className="text-sm font-medium">{lastAction.message}</p>
             </div>
           )}
+
           <Card title="🚀 Aksi Cepat">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <button onClick={handleExport} disabled={isExporting} className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <button
+                onClick={handleExport}
+                disabled={isExporting}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:opacity-60"
+              >
                 <Download className="w-4 h-4" />
-                {isExporting ? 'Exporting...' : 'Export Backup'}
+                {isExporting ? 'Exporting...' : 'Export Backup (JSON)'}
               </button>
-              <button onClick={handleImport} className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors">
-                <Upload className="w-4 h-4" />
-                Import Backup
-              </button>
-              <button onClick={handleReset} disabled={isResetting} className="flex items-center justify-center gap-2 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
+              <button
+                onClick={loadStats}
+                className="flex items-center justify-center gap-2 px-4 py-3 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg transition-colors"
+              >
                 <RefreshCw className="w-4 h-4" />
-                {isResetting ? 'Resetting...' : 'Reset Database'}
+                Refresh Stats
               </button>
             </div>
           </Card>
+
           <Card title="📊 Data Overview" className="mt-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {tables.map((t) => (
@@ -348,26 +253,24 @@ export default function DatabasePage() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => handleViewData(t.key)} className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm text-gray-700">
-                      <Eye className="w-4 h-4" />
-                      Lihat
-                    </button>
-                    <button onClick={() => handleClearTable(t.key, t.label)} className="flex items-center justify-center gap-1 px-3 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded text-sm">
-                      <Trash2 className="w-4 h-4" />
-                      Hapus
-                    </button>
-                  </div>
+                  <button
+                    onClick={() => handleViewData(t.key, t.label)}
+                    className="w-full flex items-center justify-center gap-1 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm text-gray-700"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Lihat Data
+                  </button>
                 </div>
               ))}
             </div>
           </Card>
-          <Card title="🔒 Security Status" className="mt-6">
-            <div className="space-y-2 text-sm">
-              <div className="flex items-center gap-2 text-green-600"><CheckCircle className="w-4 h-4" /><span>DevTools Protection: <strong>Active</strong></span></div>
-              <div className="flex items-center gap-2 text-green-600"><CheckCircle className="w-4 h-4" /><span>Right-Click: <strong>Disabled</strong></span></div>
-              <div className="flex items-center gap-2 text-green-600"><CheckCircle className="w-4 h-4" /><span>Keyboard Shortcuts: <strong>Blocked</strong></span></div>
-              <div className="flex items-center gap-2 text-green-600"><CheckCircle className="w-4 h-4" /><span>Session Timeout: <strong>1 Hour</strong></span></div>
+
+          <Card title="ℹ️ Info Database" className="mt-6">
+            <div className="space-y-2 text-sm text-gray-600">
+              <p>✅ Database menggunakan <strong>PostgreSQL via Prisma</strong></p>
+              <p>✅ Data tersimpan di server, bukan di browser</p>
+              <p>✅ Backup otomatis tersedia di platform hosting</p>
+              <p className="text-yellow-600">⚠️ Reset database hanya bisa dilakukan melalui Prisma Studio atau dashboard database</p>
             </div>
           </Card>
         </div>
