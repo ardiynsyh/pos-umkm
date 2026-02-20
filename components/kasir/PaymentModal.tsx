@@ -3,11 +3,73 @@
 import React, { useState } from 'react';
 import { Modal, Button, Input } from '@/components/ui';
 import { CartItem } from '@/hooks/useCart';
-import { Transaction } from '@/lib/db/database';
-import { formatCurrency, generateTransactionNumber, formatDateTime } from '@/lib/utils/format';
-import { speakIndonesian, voiceMessages } from '@/lib/utils/voice';
-import { sendWhatsAppNotification } from '@/lib/utils/whatsapp';
 import { Banknote, CreditCard, Smartphone, Printer, MessageCircle } from 'lucide-react';
+
+// Interface untuk response dari API
+interface TransactionResponse {
+  id: string;
+  nomorTransaksi: string;
+  items: Array<{
+    productId: string;
+    namaProduk: string;
+    quantity: number;
+    hargaSatuan: number;
+    subtotal: number;
+  }>;
+  total: number;
+  diskon: number;
+  pajak: number;
+  totalBayar: number;
+  uangDibayar: number;
+  kembalian: number;
+  metodePembayaran: string;
+  status: string;
+  createdAt: string;
+}
+
+// Interface untuk receipt (format yang ditampilkan)
+interface ReceiptData {
+  id: string;
+  transactionNumber: string;
+  items: Array<{
+    productId: string;
+    productName: string;
+    quantity: number;
+    price: number;
+    subtotal: number;
+  }>;
+  subtotal: number;
+  tax: number;
+  discount: number;
+  total: number;
+  paymentMethod: string;
+  paymentAmount: number;
+  change: number;
+  cashierName: string;
+  createdAt: Date;
+}
+
+// Interface untuk WhatsApp notification
+interface WhatsAppData {
+  id: string;
+  transactionNumber: string;
+  items: Array<{
+    productId: string;
+    productName: string;
+    quantity: number;
+    price: number;
+    subtotal: number;
+  }>;
+  subtotal: number;
+  tax: number;
+  discount: number;
+  total: number;
+  paymentMethod: 'cash' | 'card' | 'ewallet';
+  paymentAmount: number;
+  change: number;
+  cashierName: string;
+  createdAt: Date;
+}
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -17,6 +79,35 @@ interface PaymentModalProps {
   cashierName?: string;
   onPaymentComplete: () => void;
 }
+
+// Helper functions
+const formatCurrency = (amount: number): string => {
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(amount).replace('IDR', 'Rp').trim();
+};
+
+const formatDateTime = (date: Date): string => {
+  return new Intl.DateTimeFormat('id-ID', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
+};
+
+const generateTransactionNumber = (): string => {
+  const date = new Date();
+  const year = date.getFullYear().toString().slice(-2);
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+  return `TRX-${year}${month}${day}-${random}`;
+};
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({
   isOpen,
@@ -30,13 +121,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   const [paymentAmount, setPaymentAmount] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showReceipt, setShowReceipt] = useState(false);
-  const [completedTransaction, setCompletedTransaction] = useState<Transaction | null>(null);
+  const [completedTransaction, setCompletedTransaction] = useState<ReceiptData | null>(null);
   const [waSent, setWaSent] = useState<boolean | null>(null);
 
-  const change = parseFloat(paymentAmount) - total;
+  const paidAmount = parseFloat(paymentAmount) || 0;
+  const change = paidAmount - total;
 
   const handlePayment = async () => {
-    if (paymentMethod === 'cash' && change < 0) {
+    if (paymentMethod === 'cash' && paidAmount < total) {
       alert('Jumlah pembayaran kurang!');
       return;
     }
@@ -45,9 +137,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     try {
       const nomorTransaksi = generateTransactionNumber();
-      const uangDibayar = parseFloat(paymentAmount) || total;
+      const uangDibayar = paidAmount || total;
       const kembalian = paymentMethod === 'cash' ? Math.max(0, change) : 0;
 
+      // Format items sesuai yang diharapkan API
       const items = cartItems.map((item) => ({
         productId: item.id,
         nama: item.name,
@@ -56,83 +149,97 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         subtotal: item.subtotal,
       }));
 
-      // Ambil outletId dari API
-      const outletRes = await fetch('/api/outlets');
-      const outlets = await outletRes.json();
-      const outletId = outlets?.[0]?.id || outlets?.data?.[0]?.id;
+      // Ambil outletId dari API dengan better error handling
+      let outletId = null;
+      try {
+        console.log('Fetching outlets...');
+        const outletRes = await fetch('/api/outlets');
+        
+        if (outletRes.ok) {
+          const outlets = await outletRes.json();
+          console.log('Outlets response:', outlets);
+          
+          if (Array.isArray(outlets) && outlets.length > 0) {
+            outletId = outlets[0]?.id;
+          } else if (outlets?.data && Array.isArray(outlets.data) && outlets.data.length > 0) {
+            outletId = outlets.data[0]?.id;
+          } else if (outlets?.id) {
+            outletId = outlets.id;
+          }
+        } else {
+          console.warn('Failed to fetch outlets, status:', outletRes.status);
+        }
+      } catch (error) {
+        console.warn('Error fetching outlets:', error);
+      }
+
+      // Buat payload tanpa outletId jika tidak ditemukan
+      const payload: any = {
+        nomorTransaksi,
+        total,
+        diskon: 0,
+        pajak: 0,
+        totalBayar: total,
+        uangDibayar,
+        kembalian,
+        metodePembayaran: paymentMethod,
+        items,
+        kasir: cashierName || 'Kasir',
+      };
+
+      // Hanya tambahkan outletId jika ada
+      if (outletId) {
+        payload.outletId = outletId;
+      }
+
+      console.log('Sending payload:', payload);
 
       const res = await fetch('/api/transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nomorTransaksi,
-          total,
-          diskon: 0,
-          pajak: 0,
-          totalBayar: total,
-          uangDibayar,
-          kembalian,
-          metodePembayaran: paymentMethod,
-          items,
-          outletId,
-        }),
+        body: JSON.stringify(payload),
       });
 
+      const responseData = await res.json();
+      console.log('Response:', responseData);
+
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Gagal memproses pembayaran');
+        throw new Error(responseData.error || responseData.details || 'Gagal memproses pembayaran');
       }
 
-      const { transaction } = await res.json();
+      const { transaction } = responseData;
 
-      // Buat objek Transaction untuk receipt (kompatibel dengan tipe lama)
-      const completedTx: Transaction = {
+      // Buat objek untuk Receipt
+      const receiptData: ReceiptData = {
         id: transaction.id,
-        transactionNumber: nomorTransaksi,
-        items: cartItems.map((item) => ({
-          productId: item.id!,
-          productName: item.name,
+        transactionNumber: transaction.nomorTransaksi || nomorTransaksi,
+        items: items.map((item) => ({
+          productId: item.productId,
+          productName: item.nama,
           quantity: item.quantity,
-          price: item.price,
+          price: item.hargaSatuan,
           subtotal: item.subtotal,
         })),
         subtotal: total,
         tax: 0,
         discount: 0,
-        total,
-        paymentMethod,
+        total: total,
+        paymentMethod: paymentMethod,
         paymentAmount: uangDibayar,
         change: kembalian,
         cashierName: cashierName || 'Kasir',
         createdAt: new Date(),
       };
 
-      // Voice notification
-      if (paymentMethod === 'cash' && kembalian > 0) {
-        speakIndonesian(voiceMessages.paymentCash(total, kembalian));
-      } else {
-        speakIndonesian(voiceMessages.paymentSuccess(total));
-      }
+      // WhatsApp notification (sementara di-skip)
+      setWaSent(null); // Set ke null agar tidak menampilkan notifikasi
 
-      // WhatsApp notification
-      try {
-        const settingsRes = await fetch('/api/settings');
-        const settings = await settingsRes.json();
-        const storeName = Array.isArray(settings)
-          ? settings.find((s: any) => s.key === 'storeName')?.value
-          : settings?.storeName || 'Toko UMKM';
-
-        const waResult = await sendWhatsAppNotification(completedTx, storeName || 'Toko UMKM');
-        setWaSent(waResult.success);
-      } catch {
-        setWaSent(false);
-      }
-
-      setCompletedTransaction(completedTx);
+      setCompletedTransaction(receiptData);
       setShowReceipt(true);
     } catch (error: any) {
       console.error('Payment error:', error);
       alert(error.message || 'Terjadi kesalahan saat memproses pembayaran');
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -151,7 +258,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   const quickAmounts = [50000, 100000, 150000, 200000];
 
-  // ── Receipt Modal ─────────────────────────────────────────────────────────
+  // Receipt Modal
   if (showReceipt && completedTransaction) {
     return (
       <Modal isOpen={true} onClose={handleFinish} title="Struk Pembayaran" size="md">
@@ -257,7 +364,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     );
   }
 
-  // ── Payment Modal ─────────────────────────────────────────────────────────
+  // Payment Modal
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Pembayaran" size="md">
       <div className="space-y-4">
@@ -288,7 +395,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             ].map(({ key, label, icon: Icon }) => (
               <button
                 key={key}
-                onClick={() => setPaymentMethod(key as any)}
+                onClick={() => setPaymentMethod(key as 'cash' | 'card' | 'ewallet')}
                 className={`p-3 rounded-lg border-2 flex flex-col items-center gap-1 transition-colors ${
                   paymentMethod === key ? 'border-blue-600 bg-blue-50 text-blue-600' : 'border-gray-200 hover:border-gray-300'
                 }`}
@@ -312,6 +419,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 value={paymentAmount}
                 onChange={(e) => setPaymentAmount(e.target.value)}
                 placeholder="0"
+                min="0"
               />
             </div>
             <div className="grid grid-cols-4 gap-2">
@@ -329,7 +437,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               <div className="bg-blue-50 p-3 rounded-lg flex justify-between items-center">
                 <span className="text-sm text-gray-600">Kembalian</span>
                 <span className="text-lg font-bold text-blue-600">
-                  {change >= 0 ? formatCurrency(change) : '⚠️ Kurang'}
+                  {change >= 0 ? formatCurrency(change) : '⚠️ Kurang ' + formatCurrency(Math.abs(change))}
                 </span>
               </div>
             )}
@@ -337,10 +445,12 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         )}
 
         <div className="flex gap-2 pt-2">
-          <Button variant="outline" onClick={onClose} className="flex-1">Batal</Button>
+          <Button variant="outline" onClick={onClose} className="flex-1" disabled={isProcessing}>
+            Batal
+          </Button>
           <Button
             onClick={handlePayment}
-            disabled={isProcessing || (paymentMethod === 'cash' && (!paymentAmount || parseFloat(paymentAmount) <= 0 || change < 0))}
+            disabled={isProcessing || (paymentMethod === 'cash' && (!paymentAmount || paidAmount <= 0 || paidAmount < total))}
             className="flex-1"
           >
             {isProcessing ? 'Memproses...' : 'Bayar'}

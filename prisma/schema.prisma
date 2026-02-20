@@ -165,6 +165,7 @@ model Order {
   midtransOrderId String?     @unique
   totalAmount Float
   items       OrderItem[]
+  isRead      Boolean     @default(false) // ← TAMBAHKAN INI
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 }

@@ -11,17 +11,7 @@ import { CartPanel } from '@/components/kasir/CartPanel';
 import { PaymentModal } from '@/components/kasir/PaymentModal';
 import { Input } from '@/components/ui';
 import { Search, Barcode } from 'lucide-react';
-
-// Type sesuai dengan format API (Prisma mapped)
-interface Product {
-  id: string;
-  name: string;
-  barcode?: string;
-  price: number;
-  stock: number;
-  category?: string;
-  image?: string;
-}
+import { Product, mapPrismaProduct } from '@/lib/types/product.types';
 
 export default function KasirPage() {
   const user = useAuthStore((state) => state.user);
@@ -47,22 +37,14 @@ export default function KasirPage() {
       if (!res.ok) throw new Error('Gagal fetch produk');
       const data = await res.json();
 
-      // Mapping dari Prisma ke format Product
-      const mapped: Product[] = (data.products ?? []).map((p: any) => ({
-        id: p.id,
-        name: p.nama,
-        barcode: p.barcode ?? '',
-        price: p.hargaJual,
-        stock: p.stok,
-        category: p.category?.nama ?? 'Umum',
-        image: p.foto ?? undefined,
-      }));
+      // Mapping dari Prisma ke format Product menggunakan helper
+      const mapped: Product[] = (data.products ?? []).map((p: any) => mapPrismaProduct(p));
 
       setProducts(mapped);
 
       // Ambil kategori unik
       const uniqueCats = Array.from(
-        new Set(mapped.map((p) => p.category ?? 'Umum').filter(Boolean))
+        new Set(mapped.map((p) => p.category || 'Umum').filter(Boolean))
       );
       setCategories(['all', ...uniqueCats]);
     } catch (error) {
@@ -75,7 +57,8 @@ export default function KasirPage() {
   const filteredProducts = products.filter((product) => {
     const nameMatch = product.name.toLowerCase().includes(searchQuery.toLowerCase());
     const barcodeMatch = product.barcode ? product.barcode.includes(searchQuery) : false;
-    const matchesSearch = nameMatch || barcodeMatch;
+    const skuMatch = product.sku ? product.sku.includes(searchQuery) : false;
+    const matchesSearch = nameMatch || barcodeMatch || skuMatch;
     const matchesCategory = selectedCategory === 'all' || product.category === selectedCategory;
     return matchesSearch && matchesCategory;
   });
@@ -87,20 +70,14 @@ export default function KasirPage() {
 
       if (data.product) {
         const p = data.product;
-        cart.addToCart({
-          id: p.id,
-          name: p.nama,
-          barcode: p.barcode ?? '',
-          price: p.hargaJual,
-          stock: p.stok,
-          category: p.category?.nama ?? 'Umum',
-          image: p.foto ?? undefined,
-        });
+        const productToAdd = mapPrismaProduct(p);
+        cart.addToCart(productToAdd);
         setBarcodeInput('');
       } else {
         alert('Produk tidak ditemukan!');
       }
-    } catch {
+    } catch (error) {
+      console.error('Error scanning barcode:', error);
       alert('Gagal mencari produk');
     }
   };
@@ -130,7 +107,7 @@ export default function KasirPage() {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <Input
                     type="text"
-                    placeholder="Cari produk..."
+                    placeholder="Cari produk (nama/barcode/SKU)..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-10"

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Product } from '@/lib/db/database';
+import { Product } from '@/lib/types/product.types';
 
 export interface CartItem extends Product {
   quantity: number;
@@ -38,11 +38,11 @@ export const useCart = () => {
     });
   };
 
-  const removeFromCart = (productId: number) => {
+  const removeFromCart = (productId: string) => {
     setCartItems((prev) => prev.filter((item) => item.id !== productId));
   };
 
-  const updateQuantity = (productId: number, quantity: number) => {
+  const updateQuantity = (productId: string, quantity: number) => {
     if (quantity <= 0) {
       removeFromCart(productId);
       return;
@@ -65,24 +65,21 @@ export const useCart = () => {
     setCartItems([]);
   };
 
-  // ← PASTIKAN FUNCTION INI ADA!
   const getCartTotal = () => {
     return cartItems.reduce((total, item) => total + item.subtotal, 0);
   };
 
-  // ← PASTIKAN FUNCTION INI ADA!
   const getItemCount = () => {
     return cartItems.reduce((count, item) => count + item.quantity, 0);
   };
 
-  // ← PASTIKAN SEMUA FUNCTION DI-RETURN!
   return {
     cartItems,
     addToCart,
     removeFromCart,
     updateQuantity,
     clearCart,
-    getCartTotal,    // ← HARUS ADA
-    getItemCount,    // ← HARUS ADA
+    getCartTotal,
+    getItemCount,
   };
 };
