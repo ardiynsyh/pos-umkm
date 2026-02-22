@@ -1,7 +1,6 @@
 'use client';
 
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { useAuthStore } from '@/lib/store/authStore';
 import { useState, useEffect } from 'react';
 import { useCart } from '@/hooks/useCart';
@@ -92,7 +91,7 @@ export default function KasirPage() {
 
   return (
     <ProtectedRoute>
-      <Navbar />
+      
 
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-7xl mx-auto px-4 py-6">

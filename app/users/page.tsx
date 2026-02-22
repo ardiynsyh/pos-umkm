@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { Button, Input, Modal, Card } from '@/components/ui';
 import { Plus, Edit, Trash2, UserCheck, UserX } from 'lucide-react';
 
@@ -121,7 +120,7 @@ export default function UsersPage() {
 
   return (
     <ProtectedRoute requireOwner>
-      <Navbar />
+      
 
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-7xl mx-auto px-4 py-6">

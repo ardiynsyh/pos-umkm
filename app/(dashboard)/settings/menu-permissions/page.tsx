@@ -14,12 +14,16 @@ type Role = 'ADMIN' | 'MANAGER' | 'KASIR';
 type Permissions = Record<Role, Record<string, boolean>>;
 
 const MENUS = [
-  { key: 'kasir',    label: 'Kasir',    desc: 'Halaman transaksi penjualan' },
-  { key: 'produk',   label: 'Produk',   desc: 'Manajemen produk & stok' },
-  { key: 'laporan',  label: 'Laporan',  desc: 'Laporan penjualan & keuangan' },
-  { key: 'pesanan',  label: 'Pesanan',  desc: 'Daftar pesanan masuk' },
-  { key: 'users',    label: 'Users',    desc: 'Manajemen pengguna' },
-  { key: 'settings', label: 'Settings', desc: 'Pengaturan aplikasi' },
+  { key: 'kasir',            label: 'Kasir',            desc: 'Halaman transaksi penjualan' },
+  { key: 'produk',           label: 'Produk',           desc: 'Manajemen produk & stok' },
+  { key: 'laporan',          label: 'Laporan',          desc: 'Laporan penjualan & keuangan' },
+  { key: 'pesanan',          label: 'Pesanan',          desc: 'Daftar pesanan masuk' },
+  { key: 'pengeluaran',      label: 'Pengeluaran',      desc: 'Catatan pengeluaran toko' },
+  { key: 'supplier',         label: 'Supplier',         desc: 'Manajemen data supplier' },
+  { key: 'pembelian',        label: 'Pembelian',        desc: 'Pembelian & stok masuk' },
+  { key: 'target-penjualan', label: 'Target Penjualan', desc: 'Atur target bulanan & harian' },
+  { key: 'users',            label: 'Users',            desc: 'Manajemen pengguna' },
+  { key: 'settings',         label: 'Settings',         desc: 'Pengaturan aplikasi' },
 ];
 
 const ROLES: { key: Role; label: string; color: string }[] = [

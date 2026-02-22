@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { Bell, ChefHat, CheckCircle2, X, Clock, RefreshCw } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -213,7 +212,7 @@ export default function PesananPage() {
 
   return (
     <ProtectedRoute>
-      <Navbar />
+      
       <audio ref={audioRef} src="/sounds/beep.mp3" />
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-5xl mx-auto px-4 py-8">

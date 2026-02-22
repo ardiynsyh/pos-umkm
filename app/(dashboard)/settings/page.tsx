@@ -1,7 +1,6 @@
 'use client';
 
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { useState, useEffect } from 'react';
 import { Card, Button, Input } from '@/components/ui';
 import {
@@ -330,7 +329,7 @@ export default function SettingsPage() {
 
   return (
     <ProtectedRoute requireOwner>
-      <Navbar />
+      
 
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-4xl mx-auto px-4 py-6">

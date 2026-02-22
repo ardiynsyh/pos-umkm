@@ -1,7 +1,6 @@
 'use client';
 
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui';
 import { formatCurrency, formatDateTime } from '@/lib/utils/format';
@@ -179,7 +178,7 @@ export default function LaporanPage() {
 
   return (
     <ProtectedRoute>
-      <Navbar />
+      
 
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-7xl mx-auto px-4 py-6">

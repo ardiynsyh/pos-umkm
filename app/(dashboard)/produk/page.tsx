@@ -1,7 +1,6 @@
 'use client';
 
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { useState, useEffect } from 'react';
 import { Product } from '@/lib/db/database';
 import { Button, Input } from '@/components/ui';
@@ -89,7 +88,7 @@ export default function ProdukPage() {
 
   return (
     <ProtectedRoute>
-      <Navbar />
+      
 
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-7xl mx-auto px-4 py-6">

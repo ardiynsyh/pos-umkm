@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { useAuthStore } from '@/lib/store/authStore';
 import { useRouter } from 'next/navigation';
 import { Plus, Trash2, Pencil, X, Check, Wallet } from 'lucide-react';
@@ -118,8 +117,8 @@ export default function PengeluaranPage() {
 
   // Redirect jika bukan ADMIN
   useEffect(() => {
-    if (user && user.role !== 'ADMIN') {
-      router.replace('/dashboard');
+    if (user && user.role !== 'ADMIN' && user.role !== 'SUPERADMIN') {
+    router.replace('/dashboard');
     }
   }, [user, router]);
 
@@ -177,11 +176,11 @@ export default function PengeluaranPage() {
     return acc;
   }, {});
 
-  if (user?.role !== 'ADMIN') return null;
+  if (user?.role !== 'ADMIN' && user?.role !== 'SUPERADMIN') return null;
 
   return (
     <ProtectedRoute>
-      <Navbar />
+      
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-4xl mx-auto px-4 py-8">
 

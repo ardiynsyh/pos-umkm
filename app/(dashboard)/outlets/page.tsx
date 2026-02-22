@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { Button, Input, Modal, Card } from '@/components/ui';
 import { Plus, Edit, Trash2, Store, Users, Package } from 'lucide-react';
 
@@ -90,7 +89,7 @@ export default function OutletsPage() {
 
   return (
     <ProtectedRoute requireSuperAdmin>
-      <Navbar />
+      
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-6xl mx-auto px-4 py-8">
 

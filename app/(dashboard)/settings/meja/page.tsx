@@ -7,7 +7,6 @@
 
 import { useState, useEffect } from 'react';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { QRCodeSVG } from 'qrcode.react';
 import { Plus, Trash2, Download, QrCode } from 'lucide-react';
 
@@ -136,7 +135,7 @@ export default function MejaSettingsPage() {
 
   return (
     <ProtectedRoute>
-      <Navbar />
+      
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-4xl mx-auto px-4 py-8">
 

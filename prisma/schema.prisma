@@ -37,8 +37,12 @@ model Outlet {
   telepon      String?
   users        User[]
   products     Product[]
+  shifts       Shift[]
+  salesTargets SalesTarget[]
   transactions Transaction[]
   tables       Table[]       // ← TAMBAH INI
+  suppliers    Supplier[]
+  pembelian    Pembelian[]
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
@@ -73,6 +77,7 @@ model Product {
   outletId         String
   outlet           Outlet            @relation(fields: [outletId], references: [id])
   transactionItems TransactionItem[]
+  pembelianItems   PembelianItem[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -228,4 +233,110 @@ model MenuPermission {
 
   @@unique([menuKey, role]) // satu kombinasi menu+role hanya ada satu record
   @@map("menu_permissions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TAMBAHKAN ke prisma/schema.prisma (bagian bawah)
+// Jalankan: npx prisma migrate dev --name add_target_shift
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Target Penjualan ──────────────────────────────────────────────────────────
+model SalesTarget {
+  id        String     @id @default(cuid())
+  outletId  String
+  outlet    Outlet     @relation(fields: [outletId], references: [id])
+  type      TargetType // DAILY | MONTHLY
+  amount    Float      // target nominal (Rp)
+  year      Int
+  month     Int        // 1-12
+  day       Int?       // null = monthly target
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([outletId, type, year, month, day])
+  @@map("sales_targets")
+}
+
+enum TargetType {
+  DAILY
+  MONTHLY
+}
+
+// ── Shift Kasir ───────────────────────────────────────────────────────────────
+model Shift {
+  id              String      @id @default(cuid())
+  outletId        String
+  outlet          Outlet      @relation(fields: [outletId], references: [id])
+  kasirId         String      // userId kasir
+  kasirNama       String
+  openedAt        DateTime    @default(now())
+  closedAt        DateTime?
+  openingBalance  Float       @default(0)  // uang awal kas
+  closingBalance  Float?                   // uang fisik saat tutup
+  systemBalance   Float?                   // total dari sistem
+  difference      Float?                   // selisih fisik vs sistem
+  notes           String?
+  status          ShiftStatus @default(OPEN)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@map("shifts")
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum StatusPembelian {
+  LUNAS
+  BELUM_LUNAS
+  SEBAGIAN
+}
+
+model Supplier {
+  id        String      @id @default(cuid())
+  nama      String
+  telepon   String?
+  alamat    String?
+  hutang    Float       @default(0)
+  outletId  String
+  outlet    Outlet      @relation(fields: [outletId], references: [id])
+  pembelian Pembelian[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@map("suppliers")
+}
+
+model Pembelian {
+  id         String          @id @default(cuid())
+  tanggal    DateTime
+  supplierId String
+  supplier   Supplier        @relation(fields: [supplierId], references: [id])
+  total      Float
+  dibayar    Float           @default(0)
+  sisaHutang Float           @default(0)
+  status     StatusPembelian @default(BELUM_LUNAS)
+  keterangan String?
+  outletId   String
+  outlet     Outlet          @relation(fields: [outletId], references: [id])
+  items      PembelianItem[]
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@map("pembelian")
+}
+
+model PembelianItem {
+  id          String    @id @default(cuid())
+  pembelianId String
+  pembelian   Pembelian @relation(fields: [pembelianId], references: [id], onDelete: Cascade)
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id])
+  jumlah      Int
+  hargaBeli   Float
+  subtotal    Float
+
+  @@map("pembelian_items")
 }

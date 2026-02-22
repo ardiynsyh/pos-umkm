@@ -1,7 +1,6 @@
 'use client';
 
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import { Navbar } from '@/components/shared/Navbar';
 import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui';
 import {
@@ -119,7 +118,7 @@ export default function DatabasePage() {
   if (!isUnlocked) {
     return (
       <ProtectedRoute requireOwner>
-        <Navbar />
+        
         <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
           <div className="max-w-md w-full bg-gray-800 border border-gray-700 rounded-lg p-8">
             <div className="text-center mb-6">
@@ -182,7 +181,7 @@ export default function DatabasePage() {
 
   return (
     <ProtectedRoute requireOwner>
-      <Navbar />
+      
       <div className="min-h-screen bg-gray-100">
         <div className="max-w-6xl mx-auto px-4 py-6">
           <div className="flex items-center justify-between mb-6">
