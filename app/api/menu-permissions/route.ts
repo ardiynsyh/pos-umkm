@@ -1,33 +1,18 @@
 // app/api/menu-permissions/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-
-// Daftar semua menu yang bisa dikontrol aksesnya
-export const ALL_MENUS = [
-  { key: 'kasir',    label: 'Kasir' },
-  { key: 'produk',   label: 'Produk' },
-  { key: 'laporan',  label: 'Laporan' },
-  { key: 'pesanan',  label: 'Pesanan' },
-  { key: 'users',    label: 'Users' },
-  { key: 'settings', label: 'Settings' },
-];
-
-// Role yang bisa dikonfigurasi (SUPERADMIN selalu penuh, tidak perlu dikonfigurasi)
-export const CONFIGURABLE_ROLES = ['ADMIN', 'MANAGER', 'KASIR'] as const;
+import { ALL_MENUS, CONFIGURABLE_ROLES } from '@/lib/menu-permissions';
 
 // GET /api/menu-permissions
-// Mengembalikan semua konfigurasi permission menu per role
 export async function GET() {
   try {
     const permissions = await prisma.menuPermission.findMany();
 
-    // Susun dalam format { role: { menuKey: boolean } }
     const result: Record<string, Record<string, boolean>> = {};
 
     for (const role of CONFIGURABLE_ROLES) {
       result[role] = {};
       for (const menu of ALL_MENUS) {
-        // Cari apakah ada record di DB; kalau tidak ada, default = true (aktif)
         const perm = permissions.find(
           (p) => p.role === role && p.menuKey === menu.key
         );
@@ -43,8 +28,6 @@ export async function GET() {
 }
 
 // PUT /api/menu-permissions
-// Body: { role: string, menuKey: string, isEnabled: boolean }
-// Simpan atau update satu permission
 export async function PUT(req: NextRequest) {
   try {
     const body = await req.json();
@@ -58,7 +41,6 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Role tidak bisa dikonfigurasi' }, { status: 400 });
     }
 
-    // Upsert: update jika sudah ada, insert jika belum
     const permission = await prisma.menuPermission.upsert({
       where: { menuKey_role: { menuKey, role } },
       update: { isEnabled },
