@@ -14,16 +14,9 @@ export async function POST(req: Request) {
       include: { outlet: true },
     });
 
-    if (!user) {
-      return NextResponse.json({ message: 'Email tidak ditemukan' }, { status: 401 });
-    }
+    if (!user) return NextResponse.json({ message: 'Email tidak ditemukan' }, { status: 401 });
+    if (user.password !== password) return NextResponse.json({ message: 'Password salah' }, { status: 401 });
 
-    // Cek password (plain text — pertimbangkan bcrypt untuk production)
-    if (user.password !== password) {
-      return NextResponse.json({ message: 'Password salah' }, { status: 401 });
-    }
-
-    // Kembalikan data user (tanpa password)
     return NextResponse.json({
       user: {
         id: user.id,
@@ -31,7 +24,7 @@ export async function POST(req: Request) {
         email: user.email,
         role: user.role,
         outletId: user.outletId,
-        outlet: user.outlet,
+        outlet: user.outlet ? { id: user.outlet.id, nama: user.outlet.nama } : null,
       },
     });
   } catch (error) {

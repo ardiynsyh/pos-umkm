@@ -3,14 +3,13 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-// Type sesuai Prisma schema (bukan Dexie)
 export interface AuthUser {
   id: string;
   nama: string;
   email: string;
-  role: 'ADMIN' | 'KASIR' | 'MANAGER';
+  role: 'SUPERADMIN' | 'ADMIN' | 'KASIR' | 'MANAGER';
   outletId?: string | null;
-  outlet?: { id: string; nama: string } | null;
+  outlet?: { id: string; nama: string; alamat?: string } | null;
 }
 
 interface AuthState {
@@ -20,6 +19,7 @@ interface AuthState {
   setHasHydrated: (state: boolean) => void;
   login: (user: AuthUser) => void;
   logout: () => void;
+  switchOutlet: (outlet: { id: string; nama: string }) => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -31,6 +31,10 @@ export const useAuthStore = create<AuthState>()(
       setHasHydrated: (state) => set({ _hasHydrated: state }),
       login: (user) => set({ user, isAuthenticated: true }),
       logout: () => set({ user: null, isAuthenticated: false }),
+      switchOutlet: (outlet) =>
+        set((state) => ({
+          user: state.user ? { ...state.user, outletId: outlet.id, outlet } : null,
+        })),
     }),
     {
       name: 'pos-auth-storage',

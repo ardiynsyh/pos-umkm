@@ -24,6 +24,7 @@ model User {
 }
 
 enum UserRole {
+  SUPERADMIN
   ADMIN
   KASIR
   MANAGER
@@ -215,4 +216,16 @@ model paymentQR {
   accountName   String
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
+}
+
+model MenuPermission {
+  id        String   @id @default(cuid())
+  menuKey   String   // "kasir" | "produk" | "laporan" | "pesanan" | "users" | "settings" | "outlets"
+  role      UserRole // ADMIN | MANAGER | KASIR (SUPERADMIN selalu punya akses penuh)
+  isEnabled Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([menuKey, role]) // satu kombinasi menu+role hanya ada satu record
+  @@map("menu_permissions")
 }

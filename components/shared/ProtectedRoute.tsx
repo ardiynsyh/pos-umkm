@@ -6,15 +6,23 @@ import { useAuthStore } from '@/lib/store/authStore';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requireOwner?: boolean;
+  requireOwner?: boolean;      // hanya SUPERADMIN & ADMIN
+  requireSuperAdmin?: boolean; // hanya SUPERADMIN
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   requireOwner = false,
+  requireSuperAdmin = false,
 }) => {
   const router = useRouter();
   const { user, isAuthenticated, _hasHydrated } = useAuthStore();
+
+  const isSuperAdmin = user?.role === 'SUPERADMIN';
+  const isAdmin = user?.role === 'ADMIN';
+
+  const hasOwnerAccess = isSuperAdmin || isAdmin;
+  const hasSuperAdminAccess = isSuperAdmin;
 
   useEffect(() => {
     if (!_hasHydrated) return;
@@ -24,23 +32,38 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       return;
     }
 
-    if (requireOwner && user?.role !== 'ADMIN') { // ← ubah 'owner' → 'ADMIN'
+    if (requireSuperAdmin && !hasSuperAdminAccess) {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (requireOwner && !hasOwnerAccess) {
       router.push('/dashboard');
     }
-  }, [_hasHydrated, isAuthenticated, user, router, requireOwner]);
+  }, [_hasHydrated, isAuthenticated, user, router, requireOwner, requireSuperAdmin]);
 
   if (!_hasHydrated || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
           <p className="text-gray-500 text-sm">Memuat...</p>
         </div>
       </div>
     );
   }
 
-  if (requireOwner && user?.role !== 'ADMIN') { // ← ubah 'owner' → 'ADMIN'
+  if (requireSuperAdmin && !hasSuperAdminAccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600 font-medium">Akses ditolak. Hanya SuperAdmin yang dapat mengakses halaman ini.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (requireOwner && !hasOwnerAccess) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">

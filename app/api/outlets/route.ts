@@ -1,55 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 
-// GET /api/outlets - mengambil semua outlet
 export async function GET() {
   try {
     const outlets = await prisma.outlet.findMany({
-      select: {
-        id: true,
-        nama: true,
-        alamat: true,
-        telepon: true
-      }
+      include: {
+        _count: { select: { users: true, products: true, tables: true } },
+      },
+      orderBy: { createdAt: 'asc' },
     });
-
-    return NextResponse.json(outlets);
-  } catch (error) {
-    console.error('Error fetching outlets:', error);
-    return NextResponse.json(
-      { error: 'Gagal mengambil data outlet' },
-      { status: 500 }
-    );
+    return NextResponse.json({ outlets });
+  } catch {
+    return NextResponse.json({ message: 'Gagal memuat outlets' }, { status: 500 });
   }
 }
 
-// POST /api/outlets - membuat outlet baru (opsional)
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { nama, alamat, telepon } = body;
-
-    if (!nama) {
-      return NextResponse.json(
-        { error: 'Nama outlet harus diisi' },
-        { status: 400 }
-      );
-    }
+    const { nama, alamat, telepon } = await request.json();
+    if (!nama) return NextResponse.json({ message: 'Nama outlet harus diisi' }, { status: 400 });
 
     const outlet = await prisma.outlet.create({
-      data: {
-        nama,
-        alamat,
-        telepon
-      }
+      data: { nama, alamat: alamat || null, telepon: telepon || null },
     });
 
-    return NextResponse.json(outlet, { status: 201 });
-  } catch (error) {
-    console.error('Error creating outlet:', error);
-    return NextResponse.json(
-      { error: 'Gagal membuat outlet' },
-      { status: 500 }
-    );
+    return NextResponse.json({ outlet });
+  } catch {
+    return NextResponse.json({ message: 'Gagal membuat outlet' }, { status: 500 });
   }
 }
