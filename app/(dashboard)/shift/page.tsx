@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/lib/store/authStore';
-import { Clock, DollarSign, TrendingUp, AlertTriangle, CheckCircle, Loader2, History } from 'lucide-react';
+import { Clock, TrendingUp, AlertTriangle, CheckCircle, Loader2, History } from 'lucide-react';
 
 type Shift = {
   id: string; kasirNama: string; openedAt: string; closedAt?: string;
@@ -11,12 +11,13 @@ type Shift = {
   difference?: number; notes?: string; status: 'OPEN' | 'CLOSED';
 };
 
-const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
+const fmt     = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 const fmtTime = (d: string) => new Date(d).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' });
 
 export default function ShiftPage() {
-  const { user } = useAuthStore();
-  const outletId = user?.outletId ?? '';
+  const { user, _hasHydrated } = useAuthStore();
+  const outletId     = user?.outletId ?? '';
+  const isSuperAdmin = user?.role === 'SUPERADMIN';
 
   const [activeShift,    setActiveShift]    = useState<Shift | null>(null);
   const [history,        setHistory]        = useState<Shift[]>([]);
@@ -36,59 +37,106 @@ export default function ShiftPage() {
   const fetchShift = async () => {
     if (!outletId) return;
     setLoading(true);
-    const r = await fetch(`/api/shift?outletId=${outletId}`);
-    const d = await r.json();
-    setActiveShift(d.shift ?? null);
-    setLoading(false);
+    try {
+      const r = await fetch(`/api/shift?outletId=${outletId}`);
+      const d = await r.json();
+      setActiveShift(d.shift ?? null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchHistory = async () => {
     if (!outletId) return;
-    const r = await fetch(`/api/shift?outletId=${outletId}&history=true`);
-    const d = await r.json();
-    setHistory(d.shifts ?? []);
+    try {
+      const r = await fetch(`/api/shift?outletId=${outletId}&history=true`);
+      const d = await r.json();
+      setHistory(d.shifts ?? []);
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  useEffect(() => { fetchShift(); }, [outletId]);
-  useEffect(() => { if (showHistory) fetchHistory(); }, [showHistory]);
+  useEffect(() => {
+    if (!_hasHydrated) return;
+
+    // SUPERADMIN tanpa outletId → tidak perlu fetch, tampilkan pesan
+    if (isSuperAdmin && !outletId) {
+      setLoading(false);
+      return;
+    }
+
+    if (!outletId) return;
+    fetchShift();
+  }, [outletId, isSuperAdmin, _hasHydrated]);
+
+  useEffect(() => {
+    if (showHistory) fetchHistory();
+  }, [showHistory]);
 
   const handleOpenShift = async () => {
     setOpeningLoading(true);
-    await fetch('/api/shift', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        outletId, kasirId: user?.id, kasirNama: user?.nama,
-        openingBalance: parseFloat(openingBalance) || 0,
-      }),
-    });
-    setOpeningBalance('');
-    await fetchShift();
-    setOpeningLoading(false);
+    try {
+      await fetch('/api/shift', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          outletId, kasirId: user?.id, kasirNama: user?.nama,
+          openingBalance: parseFloat(openingBalance) || 0,
+        }),
+      });
+      setOpeningBalance('');
+      await fetchShift();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setOpeningLoading(false);
+    }
   };
 
   const handleCloseShift = async () => {
     if (!activeShift) return;
     setClosingLoading(true);
-    const r = await fetch('/api/shift', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        shiftId: activeShift.id,
-        closingBalance: parseFloat(closingBalance) || 0,
-        notes: closingNotes,
-      }),
-    });
-    const d = await r.json();
-    setClosingResult({ salesTotal: d.salesTotal, diff: d.shift.difference });
-    setClosingBalance(''); setClosingNotes('');
-    await fetchShift();
-    setClosingLoading(false);
+    try {
+      const r = await fetch('/api/shift', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shiftId: activeShift.id,
+          closingBalance: parseFloat(closingBalance) || 0,
+          notes: closingNotes,
+        }),
+      });
+      const d = await r.json();
+      setClosingResult({ salesTotal: d.salesTotal, diff: d.shift.difference });
+      setClosingBalance('');
+      setClosingNotes('');
+      await fetchShift();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setClosingLoading(false);
+    }
   };
 
-  if (loading) return (
+  // Loading — tunggu rehidrasi selesai
+  if (!_hasHydrated || loading) return (
     <div className="flex items-center justify-center h-64">
       <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+    </div>
+  );
+
+  // SUPERADMIN tanpa outlet yang dipilih
+  if (isSuperAdmin && !outletId) return (
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      <h1 className="text-2xl font-bold text-gray-900 mb-2">Shift Kasir</h1>
+      <div className="bg-blue-50 border border-blue-200 rounded-2xl p-6 text-center">
+        <TrendingUp className="w-10 h-10 text-blue-400 mx-auto mb-3" />
+        <p className="text-blue-800 font-semibold mb-1">Pilih Outlet Terlebih Dahulu</p>
+        <p className="text-blue-600 text-sm">Sebagai SuperAdmin, silakan pilih outlet spesifik untuk mengelola shift kasir.</p>
+      </div>
     </div>
   );
 
@@ -98,10 +146,12 @@ export default function ShiftPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Shift Kasir</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Kelola buka & tutup shift kasir</p>
+          <p className="text-sm text-gray-500 mt-0.5">Kelola buka &amp; tutup shift kasir</p>
         </div>
-        <button onClick={() => setShowHistory(!showHistory)}
-          className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 border border-gray-200 px-3 py-2 rounded-lg hover:border-blue-300 transition-colors">
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 border border-gray-200 px-3 py-2 rounded-lg hover:border-blue-300 transition-colors"
+        >
           <History className="w-4 h-4" /> Riwayat
         </button>
       </div>
@@ -115,9 +165,9 @@ export default function ShiftPage() {
           </div>
           <div className="p-6 grid grid-cols-2 sm:grid-cols-3 gap-4">
             {[
-              { label: 'Kasir',       value: activeShift.kasirNama },
-              { label: 'Dibuka',      value: fmtTime(activeShift.openedAt) },
-              { label: 'Modal Awal',  value: fmt(activeShift.openingBalance) },
+              { label: 'Kasir',      value: activeShift.kasirNama },
+              { label: 'Dibuka',     value: fmtTime(activeShift.openedAt) },
+              { label: 'Modal Awal', value: fmt(activeShift.openingBalance) },
             ].map(s => (
               <div key={s.label} className="bg-gray-50 rounded-xl p-3">
                 <p className="text-xs text-gray-400 mb-1">{s.label}</p>
@@ -131,17 +181,25 @@ export default function ShiftPage() {
             <h3 className="font-semibold text-gray-800">Tutup Shift</h3>
             <div>
               <label className="text-sm text-gray-600 mb-1 block">Uang Fisik di Kas (Rp)</label>
-              <input type="number" value={closingBalance} onChange={e => setClosingBalance(e.target.value)}
-                placeholder="0" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input
+                type="number" value={closingBalance}
+                onChange={e => setClosingBalance(e.target.value)}
+                placeholder="0"
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
             <div>
               <label className="text-sm text-gray-600 mb-1 block">Catatan (opsional)</label>
-              <textarea value={closingNotes} onChange={e => setClosingNotes(e.target.value)} rows={2}
+              <textarea
+                value={closingNotes} onChange={e => setClosingNotes(e.target.value)} rows={2}
                 placeholder="Catatan penutupan shift..."
-                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+              />
             </div>
-            <button onClick={handleCloseShift} disabled={closingLoading || !closingBalance}
-              className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2">
+            <button
+              onClick={handleCloseShift} disabled={closingLoading || !closingBalance}
+              className="w-full bg-red-500 hover:bg-red-600 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
               {closingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
               Tutup Shift
             </button>
@@ -157,11 +215,17 @@ export default function ShiftPage() {
             <h3 className="font-semibold text-gray-800">Buka Shift Baru</h3>
             <div>
               <label className="text-sm text-gray-600 mb-1 block">Modal Awal Kas (Rp)</label>
-              <input type="number" value={openingBalance} onChange={e => setOpeningBalance(e.target.value)}
-                placeholder="Contoh: 500000" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input
+                type="number" value={openingBalance}
+                onChange={e => setOpeningBalance(e.target.value)}
+                placeholder="Contoh: 500000"
+                className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
-            <button onClick={handleOpenShift} disabled={openingLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2">
+            <button
+              onClick={handleOpenShift} disabled={openingLoading}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
+            >
               {openingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Clock className="w-4 h-4" />}
               Buka Shift
             </button>
@@ -179,14 +243,20 @@ export default function ShiftPage() {
             <span className="font-semibold text-gray-800">Shift Ditutup</span>
           </div>
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><p className="text-gray-500">Total Penjualan</p><p className="font-bold text-gray-800">{fmt(closingResult.salesTotal)}</p></div>
-            <div><p className="text-gray-500">Selisih Kas</p>
+            <div>
+              <p className="text-gray-500">Total Penjualan</p>
+              <p className="font-bold text-gray-800">{fmt(closingResult.salesTotal)}</p>
+            </div>
+            <div>
+              <p className="text-gray-500">Selisih Kas</p>
               <p className={`font-bold ${Math.abs(closingResult.diff) < 1000 ? 'text-green-600' : 'text-orange-600'}`}>
                 {closingResult.diff >= 0 ? '+' : ''}{fmt(closingResult.diff)}
               </p>
             </div>
           </div>
-          <button onClick={() => setClosingResult(null)} className="mt-3 text-xs text-gray-400 hover:text-gray-600">Tutup notifikasi</button>
+          <button onClick={() => setClosingResult(null)} className="mt-3 text-xs text-gray-400 hover:text-gray-600">
+            Tutup notifikasi
+          </button>
         </div>
       )}
 
@@ -201,7 +271,9 @@ export default function ShiftPage() {
               <div key={s.id} className="px-6 py-4 flex items-start justify-between gap-4">
                 <div>
                   <p className="font-medium text-gray-800 text-sm">{s.kasirNama}</p>
-                  <p className="text-xs text-gray-400">{fmtTime(s.openedAt)} → {s.closedAt ? fmtTime(s.closedAt) : 'Masih berjalan'}</p>
+                  <p className="text-xs text-gray-400">
+                    {fmtTime(s.openedAt)} → {s.closedAt ? fmtTime(s.closedAt) : 'Masih berjalan'}
+                  </p>
                   {s.notes && <p className="text-xs text-gray-500 mt-1 italic">"{s.notes}"</p>}
                 </div>
                 <div className="text-right flex-shrink-0">
@@ -217,7 +289,9 @@ export default function ShiftPage() {
                 </div>
               </div>
             ))}
-            {history.length === 0 && <p className="px-6 py-8 text-center text-gray-400 text-sm">Belum ada riwayat shift</p>}
+            {history.length === 0 && (
+              <p className="px-6 py-8 text-center text-gray-400 text-sm">Belum ada riwayat shift</p>
+            )}
           </div>
         </div>
       )}

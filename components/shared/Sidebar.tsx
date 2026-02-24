@@ -1,8 +1,6 @@
 'use client';
 
 // components/shared/Sidebar.tsx
-// Sidebar navigasi kiri – collapsible di mobile, fixed di desktop    
-
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/authStore';
@@ -11,24 +9,48 @@ import {
   BarChart3, Users, ClipboardList, Store, ChevronDown,
   Shield, Menu, X, ChevronLeft, ChevronRight,
   Truck, ShoppingBag, Target, Wallet,
+  CalendarDays, ClipboardCheck, ScrollText, BadgeDollarSign,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
 const ALL_NAV_ITEMS = [
-  { key: 'dashboard',        href: '/dashboard',                 label: 'Dashboard',       icon: Home,          roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
-  { key: 'kasir',            href: '/kasir',                     label: 'Kasir',           icon: ShoppingCart,  roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
-  { key: 'produk',           href: '/produk',                    label: 'Produk',          icon: Package,       roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
-  { key: 'laporan',          href: '/laporan',                   label: 'Laporan',         icon: BarChart3,     roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
-  { key: 'pesanan',          href: '/kasir/pesanan',             label: 'Pesanan',         icon: ClipboardList, roles: ['SUPERADMIN','ADMIN','MANAGER'] },
-  { key: 'pengeluaran',      href: '/pengeluaran',               label: 'Pengeluaran',     icon: Wallet,        roles: ['SUPERADMIN','ADMIN'] },
-  { key: 'supplier',         href: '/supplier',                  label: 'Supplier',        icon: Truck,         roles: ['SUPERADMIN','ADMIN'] },
-  { key: 'pembelian',        href: '/pembelian',                 label: 'Pembelian',       icon: ShoppingBag,   roles: ['SUPERADMIN','ADMIN'] },
-  { key: 'target-penjualan', href: '/target-penjualan',         label: 'Target',          icon: Target,        roles: ['SUPERADMIN','ADMIN','MANAGER'] },
-  { key: 'users',            href: '/users',                     label: 'Users',           icon: Users,         roles: ['SUPERADMIN','ADMIN'] },
-  { key: 'settings',         href: '/settings',                  label: 'Settings',        icon: Settings,      roles: ['SUPERADMIN','ADMIN'] },
-  { key: 'outlets',          href: '/outlets',                   label: 'Outlets',         icon: Store,         roles: ['SUPERADMIN'] },
-  { key: 'menu-permissions', href: '/settings/menu-permissions', label: 'Akses Menu',      icon: Shield,        roles: ['SUPERADMIN'] },
+  { key: 'dashboard',        href: '/dashboard',                 label: 'Dashboard',       icon: Home,              roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
+  // ↓ Kasir, Produk, Pesanan — SUPERADMIN tidak memerlukan akses ini
+  { key: 'kasir',            href: '/kasir',                     label: 'Kasir',           icon: ShoppingCart,      roles: ['ADMIN','MANAGER','KASIR'] },
+  { key: 'produk',           href: '/produk',                    label: 'Produk',          icon: Package,           roles: ['ADMIN','MANAGER','KASIR'] },
+  { key: 'laporan',          href: '/laporan',                   label: 'Laporan',         icon: BarChart3,         roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
+  { key: 'pesanan',          href: '/kasir/pesanan',             label: 'Pesanan',         icon: ClipboardList,     roles: ['ADMIN','MANAGER'] },
+  { key: 'pengeluaran',      href: '/pengeluaran',               label: 'Pengeluaran',     icon: Wallet,            roles: ['SUPERADMIN','ADMIN'] },
+  { key: 'supplier',         href: '/supplier',                  label: 'Supplier',        icon: Truck,             roles: ['SUPERADMIN','ADMIN'] },
+  { key: 'pembelian',        href: '/pembelian',                 label: 'Pembelian',       icon: ShoppingBag,       roles: ['SUPERADMIN','ADMIN'] },
+  { key: 'target-penjualan', href: '/target-penjualan',          label: 'Target',          icon: Target,            roles: ['SUPERADMIN','ADMIN','MANAGER'] },
+  { key: 'absensi',          href: '/karyawan/absensi',          label: 'Absensi',         icon: ClipboardCheck,    roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
+  { key: 'jadwal',           href: '/karyawan/jadwal',           label: 'Jadwal',          icon: CalendarDays,      roles: ['SUPERADMIN','ADMIN','MANAGER','KASIR'] },
+  { key: 'log-aktivitas',    href: '/karyawan/log-aktivitas',    label: 'Log Aktivitas',   icon: ScrollText,        roles: ['SUPERADMIN','ADMIN','MANAGER'] },
+  { key: 'payroll',          href: '/karyawan/payroll',          label: 'Payroll',         icon: BadgeDollarSign,   roles: ['SUPERADMIN','ADMIN'] },
+  { key: 'users',            href: '/users',                     label: 'Users',           icon: Users,             roles: ['SUPERADMIN','ADMIN'] },
+  { key: 'settings',         href: '/settings',                  label: 'Settings',        icon: Settings,          roles: ['SUPERADMIN','ADMIN'] },
+  { key: 'outlets',          href: '/outlets',                   label: 'Outlets',         icon: Store,             roles: ['SUPERADMIN'] },
+  { key: 'menu-permissions', href: '/settings/menu-permissions', label: 'Akses Menu',      icon: Shield,            roles: ['SUPERADMIN'] },
 ];
+
+const SECTION_LABELS: Record<string, string> = {
+  dashboard: 'Utama',
+  absensi:   'Karyawan',
+  users:     'Manajemen',
+};
+
+function isRouteActive(href: string, pathname: string): boolean {
+  if (pathname === href) return true;
+  if (href === '/dashboard') return false;
+  if (!pathname.startsWith(href + '/')) return false;
+  const hasMoreSpecificMatch = ALL_NAV_ITEMS.some(
+    item => item.href !== href &&
+            item.href.startsWith(href + '/') &&
+            (pathname === item.href || pathname.startsWith(item.href + '/'))
+  );
+  return !hasMoreSpecificMatch;
+}
 
 export const Sidebar = () => {
   const router   = useRouter();
@@ -45,10 +67,20 @@ export const Sidebar = () => {
   const isSuperAdmin = user?.role === 'SUPERADMIN';
   const isAdmin      = user?.role === 'ADMIN';
 
-  useEffect(() => {
+  const fetchOutlets = () => {
     if (isSuperAdmin) {
       fetch('/api/outlets').then(r => r.json()).then(d => setOutlets(d.outlets ?? [])).catch(() => {});
     }
+  };
+
+  useEffect(() => {
+    fetchOutlets();
+  }, [isSuperAdmin]);
+
+  // ─── Listen for outlet updates ──────────────────────────────────────────────
+  useEffect(() => {
+    window.addEventListener('outlets-updated', fetchOutlets);
+    return () => window.removeEventListener('outlets-updated', fetchOutlets);
   }, [isSuperAdmin]);
 
   useEffect(() => {
@@ -103,31 +135,41 @@ export const Sidebar = () => {
 
       {/* Nav items */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-0.5">
-        {navItems.map(item => {
-          const Icon     = item.icon;
-          const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
+        {navItems.map((item, index) => {
+          const Icon      = item.icon;
+          const isActive  = isRouteActive(item.href, pathname);
+          const showLabel = !collapsed && SECTION_LABELS[item.key];
+          const prevItem  = navItems[index - 1];
+          const isDivider = showLabel && (!prevItem || SECTION_LABELS[prevItem.key] !== SECTION_LABELS[item.key]);
+
           return (
-            <Link
-              key={item.key}
-              href={item.href}
-              title={collapsed ? item.label : undefined}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group relative ${
-                isActive
-                  ? 'bg-blue-600 text-white shadow-sm shadow-blue-200'
-                  : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-              } ${collapsed ? 'justify-center' : ''}`}
-            >
-              <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-gray-400 group-hover:text-gray-600'}`} />
-              {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
-              {isActive && !collapsed && (
-                <span className="ml-auto w-1.5 h-1.5 rounded-full bg-white/60" />
+            <div key={item.key}>
+              {isDivider && (
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 px-3 pt-4 pb-1.5">
+                  {SECTION_LABELS[item.key]}
+                </p>
               )}
-              {collapsed && (
-                <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
-                  {item.label}
-                </span>
-              )}
-            </Link>
+              <Link
+                href={item.href}
+                title={collapsed ? item.label : undefined}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 group relative ${
+                  isActive
+                    ? 'bg-blue-600 text-white shadow-sm shadow-blue-200'
+                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                } ${collapsed ? 'justify-center' : ''}`}
+              >
+                <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-gray-400 group-hover:text-gray-600'}`} />
+                {!collapsed && <span className="whitespace-nowrap">{item.label}</span>}
+                {isActive && !collapsed && (
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-white/60" />
+                )}
+                {collapsed && (
+                  <span className="absolute left-full ml-3 px-2 py-1 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 transition-opacity">
+                    {item.label}
+                  </span>
+                )}
+              </Link>
+            </div>
           );
         })}
       </nav>

@@ -1,5 +1,4 @@
 // prisma/schema.prisma
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -18,7 +17,14 @@ model User {
   outletId  String?
   outlet    Outlet?  @relation(fields: [outletId], references: [id])
   createdAt DateTime @default(now())
+  tenantId  String?
+  tenant    Tenant?  @relation(fields: [tenantId], references: [id])
   updatedAt DateTime @updatedAt
+  absensi      Absensi[]
+  jadwal       Jadwal[]
+  logAktivitas LogAktivitas[]
+  payroll      Payroll[]
+  gajiSetting  GajiSetting[]
 
   @@map("users")
 }
@@ -30,21 +36,62 @@ enum UserRole {
   MANAGER
 }
 
+// ✅ Tambah ENTERPRISE
+enum Plan {
+  FREE
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+model Tenant {
+  id            String    @id @default(cuid())
+  nama          String
+  slug          String    @unique
+  email         String?   @unique  // ✅ optional — tidak semua bisnis punya email unik
+  phone         String?
+  plan          Plan      @default(FREE)
+  isActive      Boolean   @default(true)
+  maxOutlets    Int       @default(1)
+  maxUsers      Int       @default(3)
+  trialEndsAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  outlets       Outlet[]
+  users         User[]
+  products      Product[]
+  transactions  Transaction[]
+  salesTargets  SalesTarget[]
+  shifts        Shift[]
+  pengeluaran   Pengeluaran[]
+  suppliers     Supplier[]
+  pembelian     Pembelian[]
+
+  @@map("tenants")
+}
+
 model Outlet {
-  id           String        @id @default(cuid())
-  nama         String
-  alamat       String?
-  telepon      String?
-  users        User[]
-  products     Product[]
-  shifts       Shift[]
-  salesTargets SalesTarget[]
-  transactions Transaction[]
-  tables       Table[]       // ← TAMBAH INI
-  suppliers    Supplier[]
-  pembelian    Pembelian[]
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  id              String           @id @default(cuid())
+  nama            String
+  alamat          String?
+  telepon         String?
+  users           User[]
+  products        Product[]
+  shifts          Shift[]
+  salesTargets    SalesTarget[]
+  transactions    Transaction[]
+  tables          Table[]
+  suppliers       Supplier[]
+  pembelian       Pembelian[]
+  absensi         Absensi[]
+  jadwal          Jadwal[]
+  logAktivitas    LogAktivitas[]
+  payroll         Payroll[]
+  menuPermissions MenuPermission[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  tenantId        String
+  tenant          Tenant           @relation(fields: [tenantId], references: [id])
 
   @@map("outlets")
 }
@@ -80,6 +127,8 @@ model Product {
   pembelianItems   PembelianItem[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  tenantId         String
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
 
   @@index([barcode])
   @@index([sku])
@@ -107,6 +156,8 @@ model Transaction {
   syncedAt         DateTime?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+  tenantId         String
+  tenant           Tenant            @relation(fields: [tenantId], references: [id])
 
   @@index([nomorTransaksi])
   @@index([createdAt])
@@ -142,57 +193,52 @@ model TransactionItem {
   @@map("transaction_items")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TAMBAHKAN model-model ini ke dalam prisma/schema.prisma yang sudah ada
-// Jangan hapus model yang sudah ada sebelumnya!
-// ─────────────────────────────────────────────────────────────────────────────
-
 model Table {
   id        String   @id @default(cuid())
   number    Int      @unique
   label     String
   isActive  Boolean  @default(true)
-  outletId  String                                                    // ← TAMBAH INI
-  outlet    Outlet   @relation(fields: [outletId], references: [id]) // ← TAMBAH INI
+  outletId  String
+  outlet    Outlet   @relation(fields: [outletId], references: [id])
   orders    Order[]
   createdAt DateTime @default(now())
 }
 
 model Order {
-  id          String      @id @default(cuid())
-  orderNumber String      @unique // e.g. "ORD-001"
-  tableId     String
-  table       Table       @relation(fields: [tableId], references: [id])
-  customerName String?
-  status      OrderStatus @default(PENDING)
-  paymentStatus PaymentStatus @default(UNPAID)
-  paymentMethod String?       // "midtrans", "cash"
-  midtransToken String?       // snap token dari midtrans
-  midtransOrderId String?     @unique
-  totalAmount Float
-  items       OrderItem[]
-  isRead      Boolean     @default(false) // ← TAMBAHKAN INI
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  id              String        @id @default(cuid())
+  orderNumber     String        @unique
+  tableId         String
+  table           Table         @relation(fields: [tableId], references: [id])
+  customerName    String?
+  status          OrderStatus   @default(PENDING)
+  paymentStatus   PaymentStatus @default(UNPAID)
+  paymentMethod   String?
+  midtransToken   String?
+  midtransOrderId String?       @unique
+  totalAmount     Float
+  items           OrderItem[]
+  isRead          Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 }
 
 model OrderItem {
-  id        String  @id @default(cuid())
-  orderId   String
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId String
-  productName String  // simpan nama saat order (antisipasi produk dihapus)
-  price     Float
-  quantity  Int
-  subtotal  Float
+  id          String @id @default(cuid())
+  orderId     String
+  order       Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId   String
+  productName String
+  price       Float
+  quantity    Int
+  subtotal    Float
 }
 
 enum OrderStatus {
-  PENDING      // baru masuk, belum diproses
-  PROCESSING   // sedang diproses dapur/kasir
-  READY        // siap disajikan
-  COMPLETED    // selesai
-  CANCELLED    // dibatalkan
+  PENDING
+  PROCESSING
+  READY
+  COMPLETED
+  CANCELLED
 }
 
 enum PaymentStatus {
@@ -209,6 +255,8 @@ model Pengeluaran {
   jumlah     Float
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  tenantId   String
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
 
   @@map("pengeluaran")
 }
@@ -225,33 +273,33 @@ model paymentQR {
 
 model MenuPermission {
   id        String   @id @default(cuid())
-  menuKey   String   // "kasir" | "produk" | "laporan" | "pesanan" | "users" | "settings" | "outlets"
-  role      UserRole // ADMIN | MANAGER | KASIR (SUPERADMIN selalu punya akses penuh)
+  menuKey   String
+  role      String   // ADMIN, MANAGER, KASIR
   isEnabled Boolean  @default(true)
+  tenantId  String   // foreign key ke Outlet.id
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([menuKey, role]) // satu kombinasi menu+role hanya ada satu record
+  outlet    Outlet   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([menuKey, role, tenantId])
+  @@index([tenantId])
   @@map("menu_permissions")
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TAMBAHKAN ke prisma/schema.prisma (bagian bawah)
-// Jalankan: npx prisma migrate dev --name add_target_shift
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ── Target Penjualan ──────────────────────────────────────────────────────────
 model SalesTarget {
   id        String     @id @default(cuid())
   outletId  String
   outlet    Outlet     @relation(fields: [outletId], references: [id])
-  type      TargetType // DAILY | MONTHLY
-  amount    Float      // target nominal (Rp)
+  type      TargetType
+  amount    Float
   year      Int
-  month     Int        // 1-12
-  day       Int?       // null = monthly target
+  month     Int
+  day       Int?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
+  tenantId  String
+  tenant    Tenant     @relation(fields: [tenantId], references: [id])
 
   @@unique([outletId, type, year, month, day])
   @@map("sales_targets")
@@ -262,23 +310,24 @@ enum TargetType {
   MONTHLY
 }
 
-// ── Shift Kasir ───────────────────────────────────────────────────────────────
 model Shift {
-  id              String      @id @default(cuid())
-  outletId        String
-  outlet          Outlet      @relation(fields: [outletId], references: [id])
-  kasirId         String      // userId kasir
-  kasirNama       String
-  openedAt        DateTime    @default(now())
-  closedAt        DateTime?
-  openingBalance  Float       @default(0)  // uang awal kas
-  closingBalance  Float?                   // uang fisik saat tutup
-  systemBalance   Float?                   // total dari sistem
-  difference      Float?                   // selisih fisik vs sistem
-  notes           String?
-  status          ShiftStatus @default(OPEN)
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id             String      @id @default(cuid())
+  outletId       String
+  outlet         Outlet      @relation(fields: [outletId], references: [id])
+  kasirId        String
+  kasirNama      String
+  openedAt       DateTime    @default(now())
+  closedAt       DateTime?
+  openingBalance Float       @default(0)
+  closingBalance Float?
+  systemBalance  Float?
+  difference     Float?
+  notes          String?
+  status         ShiftStatus @default(OPEN)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  tenantId       String
+  tenant         Tenant      @relation(fields: [tenantId], references: [id])
 
   @@map("shifts")
 }
@@ -305,6 +354,8 @@ model Supplier {
   pembelian Pembelian[]
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
+  tenantId  String
+  tenant    Tenant      @relation(fields: [tenantId], references: [id])
 
   @@map("suppliers")
 }
@@ -324,6 +375,8 @@ model Pembelian {
   items      PembelianItem[]
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
+  tenantId   String
+  tenant     Tenant          @relation(fields: [tenantId], references: [id])
 
   @@map("pembelian")
 }
@@ -339,4 +392,103 @@ model PembelianItem {
   subtotal    Float
 
   @@map("pembelian_items")
+}
+
+model Absensi {
+  id         String   @id @default(cuid())
+  userId     String
+  outletId   String
+  tanggal    String
+  jamMasuk   String?
+  jamKeluar  String?
+  shift      String
+  status     String
+  keterangan String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user   User   @relation(fields: [userId],   references: [id])
+  outlet Outlet @relation(fields: [outletId], references: [id])
+
+  @@unique([userId, tanggal])
+  @@index([tanggal])
+  @@index([outletId])
+}
+
+model Jadwal {
+  id         String   @id @default(cuid())
+  userId     String
+  outletId   String
+  tanggal    String
+  shift      String
+  keterangan String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user   User   @relation(fields: [userId],   references: [id])
+  outlet Outlet @relation(fields: [outletId], references: [id])
+
+  @@unique([userId, tanggal])
+  @@index([tanggal])
+  @@index([outletId])
+}
+
+model LogAktivitas {
+  id        String   @id @default(cuid())
+  userId    String
+  outletId  String
+  action    String
+  type      String
+  meta      Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId],   references: [id])
+  outlet Outlet @relation(fields: [outletId], references: [id])
+
+  @@index([userId])
+  @@index([outletId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model Payroll {
+  id            String   @id @default(cuid())
+  userId        String
+  outletId      String
+  periode       String
+  hariKerja     Int      @default(0)
+  lemburJam     Int      @default(0)
+  gajiPokok     Int      @default(0)
+  tunjangan     Int      @default(0)
+  lemburNominal Int      @default(0)
+  potongan      Int      @default(0)
+  totalGaji     Int      @default(0)
+  status        String   @default("pending")
+  tanggalBayar  String?
+  catatan       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user   User   @relation(fields: [userId],   references: [id])
+  outlet Outlet @relation(fields: [outletId], references: [id])
+
+  @@unique([userId, periode])
+  @@index([periode])
+  @@index([outletId])
+}
+
+model GajiSetting {
+  id                String   @id @default(cuid())
+  userId            String   @unique
+  skema             String   @default("bulanan")
+  gajiPokok         Int      @default(0)
+  gajiHarian        Int      @default(0)
+  tunjangan         Int      @default(0)
+  tarifLembur       Int      @default(0)
+  potonganTerlambat Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
 }

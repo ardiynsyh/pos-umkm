@@ -1,13 +1,19 @@
+// app/api/pembelian/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  const role = req.headers.get('x-user-role');
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
+    const { searchParams } = new URL(req.url);
     const bulan = searchParams.get('bulan');
 
-    let startDate: Date | undefined;
-    let endDate: Date | undefined;
+    let startDate: Date | undefined, endDate: Date | undefined;
     if (bulan) {
       startDate = new Date(`${bulan}-01`);
       endDate = new Date(startDate);
@@ -15,7 +21,11 @@ export async function GET(request: NextRequest) {
     }
 
     const pembelian = await prisma.pembelian.findMany({
-      where: startDate && endDate ? { tanggal: { gte: startDate, lt: endDate } } : {},
+      where: {
+        // Pembelian punya tenantId langsung di schema
+        ...(tenantId && { tenantId }),
+        ...(startDate && endDate && { tanggal: { gte: startDate, lt: endDate } }),
+      },
       include: {
         supplier: { select: { nama: true } },
         items: { include: { product: { select: { nama: true } } } },
@@ -29,24 +39,26 @@ export async function GET(request: NextRequest) {
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const { supplierId, tanggal, items, total, dibayar, keterangan } = await request.json();
+export async function POST(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  if (!tenantId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
+  try {
+    const { supplierId, tanggal, items, total, dibayar, keterangan } = await req.json();
     if (!supplierId || !items?.length) {
       return NextResponse.json({ message: 'Supplier dan item harus diisi' }, { status: 400 });
     }
 
-    const outlet = await prisma.outlet.findFirst();
+    const outlet = await prisma.outlet.findFirst({ where: { tenantId } });
     if (!outlet) return NextResponse.json({ message: 'Outlet tidak ditemukan' }, { status: 400 });
 
     const totalDibayar = parseFloat(dibayar) || 0;
     const sisaHutang = Math.max(0, total - totalDibayar);
     const status = sisaHutang === 0 ? 'LUNAS' : totalDibayar > 0 ? 'SEBAGIAN' : 'BELUM_LUNAS';
 
-    // Gunakan transaction Prisma agar atomic
     const pembelian = await prisma.$transaction(async (tx) => {
-      // 1. Buat record pembelian
       const newPembelian = await tx.pembelian.create({
         data: {
           tanggal: new Date(tanggal),
@@ -57,6 +69,7 @@ export async function POST(request: NextRequest) {
           status,
           keterangan: keterangan || null,
           outletId: outlet.id,
+          tenantId, // ← Pembelian punya tenantId langsung di schema
           items: {
             create: items.map((item: any) => ({
               productId: item.productId,
@@ -69,18 +82,13 @@ export async function POST(request: NextRequest) {
         include: { supplier: true, items: { include: { product: true } } },
       });
 
-      // 2. Update stok produk (otomatis bertambah)
       for (const item of items) {
         await tx.product.update({
           where: { id: item.productId },
-          data: {
-            stok: { increment: item.jumlah },
-            hargaBeli: item.hargaBeli, // update harga beli terakhir
-          },
+          data: { stok: { increment: item.jumlah }, hargaBeli: item.hargaBeli },
         });
       }
 
-      // 3. Update hutang supplier
       if (sisaHutang > 0) {
         await tx.supplier.update({
           where: { id: supplierId },

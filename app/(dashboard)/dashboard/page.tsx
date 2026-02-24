@@ -5,23 +5,35 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/lib/store/authStore';
 import Link from 'next/link';
 import {
-  TrendingUp, TrendingDown, ShoppingCart, Target,
+  TrendingUp, TrendingDown, Target,
   Clock, Package, BarChart3, ArrowRight, Loader2, Zap,
 } from 'lucide-react';
 
 // ─── Tipe ─────────────────────────────────────────────────────────────────────
 type Analytics = {
-  daily7:     { date: string; total: number }[];
-  monthly6:   { month: string; total: number }[];
-  hourlyData: { jam: string; total: number }[];
+  daily7:      { date: string; total: number }[];
+  monthly6:    { month: string; total: number }[];
+  hourlyData:  { jam: string; total: number }[];
   topProducts: { name: string; qty: number; revenue: number }[];
-  comparison: { thisMonth: number; lastMonth: number; growth: number };
-  today:      { total: number; count: number };
+  comparison:  { thisMonth: number; lastMonth: number; growth: number };
+  today:       { total: number; count: number };
 };
-type TargetData = { monthly: { target: number; actual: number }; daily: { target: number; actual: number } };
+type TargetData = {
+  monthly: { target: number; actual: number };
+  daily:   { target: number; actual: number };
+};
 
-const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
-const fmtShort = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}jt` : n >= 1000 ? `${(n / 1000).toFixed(0)}rb` : String(n);
+// Default fallback agar tidak crash saat API belum/tidak return shape yang benar
+const DEFAULT_TARGET: TargetData = {
+  monthly: { target: 0, actual: 0 },
+  daily:   { target: 0, actual: 0 },
+};
+
+const fmt      = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
+const fmtShort = (n: number) =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}jt`
+  : n >= 1000    ? `${(n / 1000).toFixed(0)}rb`
+  : String(n);
 
 // ─── Mini bar chart ───────────────────────────────────────────────────────────
 function BarChart({ data, color }: { data: { label: string; value: number }[]; color: string }) {
@@ -35,7 +47,6 @@ function BarChart({ data, color }: { data: { label: string; value: number }[]; c
               className={`w-full rounded-t-sm transition-all duration-500 ${color}`}
               style={{ height: `${Math.max((d.value / max) * 80, d.value > 0 ? 4 : 0)}px` }}
             />
-            {/* Tooltip */}
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-gray-900 text-white text-xs px-2 py-1 rounded-lg opacity-0 group-hover:opacity-100 whitespace-nowrap z-10 pointer-events-none">
               {fmtShort(d.value)}
             </div>
@@ -49,8 +60,8 @@ function BarChart({ data, color }: { data: { label: string; value: number }[]; c
 
 // ─── Progress ring ────────────────────────────────────────────────────────────
 function ProgressRing({ pct, color, size = 64 }: { pct: number; color: string; size?: number }) {
-  const r = (size - 8) / 2;
-  const circ = 2 * Math.PI * r;
+  const r      = (size - 8) / 2;
+  const circ   = 2 * Math.PI * r;
   const offset = circ - (Math.min(pct, 100) / 100) * circ;
   return (
     <svg width={size} height={size} className="-rotate-90">
@@ -72,33 +83,59 @@ const getGreeting = () => {
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const { user }     = useAuthStore();
+  const { user, _hasHydrated } = useAuthStore();
   const outletId     = user?.outletId ?? '';
   const isSuperAdmin = user?.role === 'SUPERADMIN';
 
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [target,    setTarget]    = useState<TargetData | null>(null);
+  const [target,    setTarget]    = useState<TargetData>(DEFAULT_TARGET);
   const [loading,   setLoading]   = useState(true);
 
   useEffect(() => {
-    if (!outletId) return;
+    if (!_hasHydrated) return;
+    if (!isSuperAdmin && !outletId) return;
+
     const load = async () => {
       setLoading(true);
-      const now = new Date();
-      const [a, t] = await Promise.all([
-        fetch(`/api/analytics?outletId=${outletId}`).then(r => r.json()),
-        fetch(`/api/sales-target?outletId=${outletId}&year=${now.getFullYear()}&month=${now.getMonth()+1}`).then(r => r.json()),
-      ]);
-      setAnalytics(a);
-      setTarget(t);
-      setLoading(false);
+      try {
+        const now         = new Date();
+        const query       = outletId ? `outletId=${outletId}` : '';
+        const targetQuery = `${query ? query + '&' : ''}year=${now.getFullYear()}&month=${now.getMonth() + 1}`;
+
+        const [a, t] = await Promise.all([
+          fetch(`/api/analytics?${query}`).then(r => r.json()),
+          fetch(`/api/sales-target?${targetQuery}`).then(r => r.json()),
+        ]);
+
+        setAnalytics(a);
+
+        // Validasi shape sebelum set — hindari crash jika API return error
+        if (t?.monthly && t?.daily) {
+          setTarget(t);
+        } else {
+          setTarget(DEFAULT_TARGET);
+        }
+      } catch (e) {
+        console.error(e);
+        setTarget(DEFAULT_TARGET);
+      } finally {
+        setLoading(false);
+      }
     };
     load();
-  }, [outletId]);
+  }, [outletId, isSuperAdmin, _hasHydrated]);
 
-  const monthlyPct = target ? (target.monthly.target > 0 ? Math.min(Math.round((target.monthly.actual / target.monthly.target) * 100), 100) : 0) : 0;
-  const dailyPct   = target ? (target.daily.target > 0   ? Math.min(Math.round((target.daily.actual   / target.daily.target)   * 100), 100) : 0) : 0;
-  const today = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  // Safe kalkulasi dengan optional chaining
+  const monthlyPct = (target.monthly?.target ?? 0) > 0
+    ? Math.min(Math.round((target.monthly.actual / target.monthly.target) * 100), 100)
+    : 0;
+  const dailyPct = (target.daily?.target ?? 0) > 0
+    ? Math.min(Math.round((target.daily.actual / target.daily.target) * 100), 100)
+    : 0;
+
+  const today = new Date().toLocaleDateString('id-ID', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  });
 
   return (
     <div className="space-y-5 pb-8">
@@ -109,10 +146,18 @@ export default function DashboardPage() {
         <div className="relative flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <p className="text-blue-200 text-sm mb-1">{today}</p>
-            <h1 className="text-2xl sm:text-3xl font-bold text-white">{getGreeting()}, {user?.nama?.split(' ')[0]}! 👋</h1>
-            {user?.outlet?.nama && <p className="text-blue-200 text-sm mt-1">🏪 {user.outlet.nama}</p>}
+            <h1 className="text-2xl sm:text-3xl font-bold text-white">
+              {getGreeting()}, {user?.nama?.split(' ')[0]}! 👋
+            </h1>
+            {isSuperAdmin
+              ? <p className="text-blue-200 text-sm mt-1">🏢 Semua Outlet</p>
+              : user?.outlet?.nama && <p className="text-blue-200 text-sm mt-1">🏪 {user.outlet.nama}</p>
+            }
           </div>
-          <Link href="/kasir" className="inline-flex items-center gap-2 bg-white text-blue-700 font-semibold text-sm px-5 py-3 rounded-xl hover:bg-blue-50 transition-colors self-start sm:self-auto whitespace-nowrap">
+          <Link
+            href="/kasir"
+            className="inline-flex items-center gap-2 bg-white text-blue-700 font-semibold text-sm px-5 py-3 rounded-xl hover:bg-blue-50 transition-colors self-start sm:self-auto whitespace-nowrap"
+          >
             <Zap className="w-4 h-4" /> Buka Kasir
           </Link>
         </div>
@@ -121,10 +166,10 @@ export default function DashboardPage() {
         {!loading && analytics && (
           <div className="relative mt-5 grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { label: 'Penjualan Hari Ini', value: fmtShort(analytics.today.total), sub: fmt(analytics.today.total) },
-              { label: 'Transaksi Hari Ini', value: String(analytics.today.count), sub: 'transaksi' },
-              { label: 'Pertumbuhan', value: `${analytics.comparison.growth > 0 ? '+' : ''}${analytics.comparison.growth}%`, sub: 'vs bulan lalu' },
-              { label: 'Bulan Ini', value: fmtShort(analytics.comparison.thisMonth), sub: fmt(analytics.comparison.thisMonth) },
+              { label: 'Penjualan Hari Ini', value: fmtShort(analytics.today.total),         sub: fmt(analytics.today.total) },
+              { label: 'Transaksi Hari Ini', value: String(analytics.today.count),            sub: 'transaksi' },
+              { label: 'Pertumbuhan',        value: `${analytics.comparison.growth > 0 ? '+' : ''}${analytics.comparison.growth}%`, sub: 'vs bulan lalu' },
+              { label: 'Bulan Ini',          value: fmtShort(analytics.comparison.thisMonth), sub: fmt(analytics.comparison.thisMonth) },
             ].map(s => (
               <div key={s.label} className="bg-white/10 backdrop-blur-sm rounded-xl p-3">
                 <p className="text-blue-200 text-xs mb-1">{s.label}</p>
@@ -157,12 +202,14 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2 mb-3">
-                <div className={`h-2 rounded-full transition-all duration-700 ${monthlyPct >= 100 ? 'bg-green-500' : monthlyPct >= 70 ? 'bg-blue-500' : 'bg-violet-400'}`}
-                  style={{ width: `${monthlyPct}%` }} />
+                <div
+                  className={`h-2 rounded-full transition-all duration-700 ${monthlyPct >= 100 ? 'bg-green-500' : monthlyPct >= 70 ? 'bg-blue-500' : 'bg-violet-400'}`}
+                  style={{ width: `${monthlyPct}%` }}
+                />
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">{fmt(target?.monthly.actual ?? 0)}</span>
-                <span className="text-gray-400">/ {target?.monthly.target ? fmt(target.monthly.target) : 'Belum diset'}</span>
+                <span className="text-gray-500">{fmt(target.monthly.actual)}</span>
+                <span className="text-gray-400">/ {target.monthly.target > 0 ? fmt(target.monthly.target) : 'Belum diset'}</span>
               </div>
               <Link href="/target-penjualan" className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:underline">
                 <Target className="w-3 h-3" /> Atur target <ArrowRight className="w-3 h-3" />
@@ -182,12 +229,14 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="w-full bg-gray-100 rounded-full h-2 mb-3">
-                <div className={`h-2 rounded-full transition-all duration-700 ${dailyPct >= 100 ? 'bg-green-500' : dailyPct >= 70 ? 'bg-orange-400' : 'bg-orange-300'}`}
-                  style={{ width: `${dailyPct}%` }} />
+                <div
+                  className={`h-2 rounded-full transition-all duration-700 ${dailyPct >= 100 ? 'bg-green-500' : dailyPct >= 70 ? 'bg-orange-400' : 'bg-orange-300'}`}
+                  style={{ width: `${dailyPct}%` }}
+                />
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-gray-500">{fmt(target?.daily.actual ?? 0)}</span>
-                <span className="text-gray-400">/ {target?.daily.target ? fmt(target.daily.target) : 'Belum diset'}</span>
+                <span className="text-gray-500">{fmt(target.daily.actual)}</span>
+                <span className="text-gray-400">/ {target.daily.target > 0 ? fmt(target.daily.target) : 'Belum diset'}</span>
               </div>
               <Link href="/shift" className="mt-3 flex items-center gap-1 text-xs text-blue-600 hover:underline">
                 <Clock className="w-3 h-3" /> Lihat shift kasir <ArrowRight className="w-3 h-3" />
@@ -206,7 +255,10 @@ export default function DashboardPage() {
                 </div>
                 <BarChart3 className="w-4 h-4 text-blue-400" />
               </div>
-              <BarChart data={analytics.daily7.map(d => ({ label: d.date.split(',')[0], value: d.total }))} color="bg-blue-500 hover:bg-blue-600" />
+              <BarChart
+                data={analytics.daily7.map(d => ({ label: d.date.split(',')[0], value: d.total }))}
+                color="bg-blue-500 hover:bg-blue-600"
+              />
               <div className="mt-3 flex justify-between text-xs text-gray-400">
                 <span>Total: {fmt(analytics.daily7.reduce((s, d) => s + d.total, 0))}</span>
                 <span>Avg: {fmt(Math.round(analytics.daily7.reduce((s, d) => s + d.total, 0) / 7))}/hari</span>
@@ -222,11 +274,15 @@ export default function DashboardPage() {
                 </div>
                 <TrendingUp className="w-4 h-4 text-emerald-400" />
               </div>
-              <BarChart data={analytics.monthly6.map(d => ({ label: d.month, value: d.total }))} color="bg-emerald-500 hover:bg-emerald-600" />
+              <BarChart
+                data={analytics.monthly6.map(d => ({ label: d.month, value: d.total }))}
+                color="bg-emerald-500 hover:bg-emerald-600"
+              />
               <div className="mt-3 flex items-center gap-1.5 text-xs">
                 {analytics.comparison.growth >= 0
                   ? <><TrendingUp className="w-3 h-3 text-green-500" /><span className="text-green-600 font-medium">+{analytics.comparison.growth}%</span></>
-                  : <><TrendingDown className="w-3 h-3 text-red-500" /><span className="text-red-500 font-medium">{analytics.comparison.growth}%</span></>}
+                  : <><TrendingDown className="w-3 h-3 text-red-500" /><span className="text-red-500 font-medium">{analytics.comparison.growth}%</span></>
+                }
                 <span className="text-gray-400">vs bulan lalu</span>
               </div>
             </div>
@@ -239,7 +295,10 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <p className="font-semibold text-gray-800">Produk Terlaris</p>
-                  <p className="text-xs text-gray-400">Bulan ini berdasarkan qty terjual</p>
+                  <p className="text-xs text-gray-400">
+                    Bulan ini berdasarkan qty terjual
+                    {isSuperAdmin && <span className="ml-1 text-blue-500">(semua outlet)</span>}
+                  </p>
                 </div>
                 <Package className="w-4 h-4 text-orange-400" />
               </div>
@@ -251,7 +310,9 @@ export default function DashboardPage() {
                   const maxQty = analytics.topProducts[0]?.qty ?? 1;
                   return (
                     <div key={i} className="flex items-center gap-3">
-                      <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${i === 0 ? 'bg-amber-100 text-amber-700' : i === 1 ? 'bg-gray-100 text-gray-600' : 'bg-orange-50 text-orange-500'}`}>
+                      <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold flex-shrink-0 ${
+                        i === 0 ? 'bg-amber-100 text-amber-700' : i === 1 ? 'bg-gray-100 text-gray-600' : 'bg-orange-50 text-orange-500'
+                      }`}>
                         {i + 1}
                       </span>
                       <div className="flex-1 min-w-0">
@@ -260,8 +321,10 @@ export default function DashboardPage() {
                           <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{p.qty} pcs</span>
                         </div>
                         <div className="w-full bg-gray-100 rounded-full h-1.5">
-                          <div className="h-1.5 rounded-full bg-orange-400 transition-all duration-700"
-                            style={{ width: `${(p.qty / maxQty) * 100}%` }} />
+                          <div
+                            className="h-1.5 rounded-full bg-orange-400 transition-all duration-700"
+                            style={{ width: `${(p.qty / maxQty) * 100}%` }}
+                          />
                         </div>
                       </div>
                       <span className="text-xs font-semibold text-gray-600 flex-shrink-0">{fmtShort(p.revenue)}</span>
@@ -285,12 +348,13 @@ export default function DashboardPage() {
                 color="bg-violet-400 hover:bg-violet-500"
               />
               {(() => {
-                const busiest = analytics.hourlyData.reduce((a, b) => b.total > a.total ? b : a, analytics.hourlyData[0]);
-                return busiest?.total > 0 ? (
-                  <p className="mt-3 text-xs text-gray-400">
-                    Jam tersibuk: <span className="font-semibold text-violet-600">{busiest.jam}</span> ({fmtShort(busiest.total)})
-                  </p>
-                ) : <p className="mt-3 text-xs text-gray-400">Belum ada transaksi hari ini</p>;
+                const busiest = analytics.hourlyData.reduce(
+                  (a, b) => b.total > a.total ? b : a,
+                  analytics.hourlyData[0]
+                );
+                return busiest?.total > 0
+                  ? <p className="mt-3 text-xs text-gray-400">Jam tersibuk: <span className="font-semibold text-violet-600">{busiest.jam}</span> ({fmtShort(busiest.total)})</p>
+                  : <p className="mt-3 text-xs text-gray-400">Belum ada transaksi hari ini</p>;
               })()}
             </div>
           </div>
@@ -298,13 +362,14 @@ export default function DashboardPage() {
           {/* ── Quick links ───────────────────────────────────────────────── */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { href: '/laporan',           label: 'Lihat Laporan',   icon: BarChart3,  color: 'text-blue-600   bg-blue-50' },
-              { href: '/target-penjualan',  label: 'Atur Target',     icon: Target,     color: 'text-violet-600 bg-violet-50' },
-              { href: '/shift',             label: 'Kelola Shift',    icon: Clock,      color: 'text-orange-600 bg-orange-50' },
-              { href: '/produk',            label: 'Cek Stok',        icon: Package,    color: 'text-emerald-600 bg-emerald-50' },
+              { href: '/laporan',          label: 'Lihat Laporan', icon: BarChart3, color: 'text-blue-600   bg-blue-50' },
+              { href: '/target-penjualan', label: 'Atur Target',   icon: Target,   color: 'text-violet-600 bg-violet-50' },
+              { href: '/shift',            label: 'Kelola Shift',  icon: Clock,    color: 'text-orange-600 bg-orange-50' },
+              { href: '/produk',           label: 'Cek Stok',      icon: Package,  color: 'text-emerald-600 bg-emerald-50' },
             ].map(item => (
               <Link key={item.href} href={item.href}
-                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col items-center gap-2 hover:shadow-md hover:-translate-y-0.5 transition-all group">
+                className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 flex flex-col items-center gap-2 hover:shadow-md hover:-translate-y-0.5 transition-all group"
+              >
                 <div className={`w-10 h-10 rounded-xl ${item.color.split(' ')[1]} flex items-center justify-center`}>
                   <item.icon className={`w-5 h-5 ${item.color.split(' ')[0]}`} />
                 </div>

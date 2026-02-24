@@ -2,18 +2,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-// GET /api/shift?outletId=xxx — ambil shift aktif
 export async function GET(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  const role     = req.headers.get('x-user-role');
+
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { searchParams } = new URL(req.url);
-    const outletId = searchParams.get('outletId');
+    const outletId = searchParams.get('outletId') || null;
     const history  = searchParams.get('history') === 'true';
 
-    if (!outletId) return NextResponse.json({ error: 'outletId required' }, { status: 400 });
+    // outletId wajib untuk operasional shift
+    if (!outletId) {
+      return NextResponse.json({ error: 'outletId required' }, { status: 400 });
+    }
+
+    const tenantFilter = tenantId ? { tenantId } : {};
 
     if (history) {
       const shifts = await prisma.shift.findMany({
-        where: { outletId },
+        where: { outletId, ...tenantFilter },
         orderBy: { openedAt: 'desc' },
         take: 20,
       });
@@ -21,10 +32,9 @@ export async function GET(req: NextRequest) {
     }
 
     const activeShift = await prisma.shift.findFirst({
-      where: { outletId, status: 'OPEN' },
+      where: { outletId, status: 'OPEN', ...tenantFilter },
       orderBy: { openedAt: 'desc' },
     });
-
     return NextResponse.json({ shift: activeShift });
   } catch (error) {
     console.error('[GET /api/shift]', error);
@@ -32,24 +42,37 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/shift — buka shift baru
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { outletId, kasirId, kasirNama, openingBalance } = body;
+  const tenantId = req.headers.get('x-tenant-id');
+  const role     = req.headers.get('x-user-role');
 
-    // Cek apakah sudah ada shift aktif
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const { outletId, kasirId, kasirNama, openingBalance } = await req.json();
+
+    if (!outletId) {
+      return NextResponse.json({ error: 'outletId required' }, { status: 400 });
+    }
+
+    const tenantFilter = tenantId ? { tenantId } : {};
+
     const existing = await prisma.shift.findFirst({
-      where: { outletId, status: 'OPEN' },
+      where: { outletId, status: 'OPEN', ...tenantFilter },
     });
     if (existing) {
       return NextResponse.json({ error: 'Masih ada shift aktif yang belum ditutup' }, { status: 400 });
     }
 
     const shift = await prisma.shift.create({
-      data: { outletId, kasirId, kasirNama, openingBalance: openingBalance ?? 0 },
+      data: {
+        outletId, kasirId, kasirNama,
+        openingBalance: openingBalance ?? 0,
+        ...(tenantId && { tenantId }),
+      },
     });
-
     return NextResponse.json({ shift });
   } catch (error) {
     console.error('[POST /api/shift]', error);
@@ -57,49 +80,52 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// PATCH /api/shift — tutup shift
 export async function PATCH(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  const role     = req.headers.get('x-user-role');
+
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    const body = await req.json();
-    const { shiftId, closingBalance, notes } = body;
+    const { shiftId, closingBalance, notes } = await req.json();
 
     const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
-    if (!shift) return NextResponse.json({ error: 'Shift tidak ditemukan' }, { status: 404 });
-    if (shift.status === 'CLOSED') return NextResponse.json({ error: 'Shift sudah ditutup' }, { status: 400 });
+    if (!shift) {
+      return NextResponse.json({ error: 'Shift tidak ditemukan' }, { status: 404 });
+    }
+    // Validasi tenant hanya jika bukan SUPERADMIN
+    if (tenantId && shift.tenantId !== tenantId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+    if (shift.status === 'CLOSED') {
+      return NextResponse.json({ error: 'Shift sudah ditutup' }, { status: 400 });
+    }
 
-    // Hitung total penjualan selama shift ini dari sistem
+    const tenantFilter    = tenantId ? { tenantId } : {};
+    const outletTenantFilter = tenantId ? { outlet: { tenantId } } : {};
+
     const [txSum, orderSum] = await Promise.all([
       prisma.transaction.aggregate({
-        where: {
-          outletId: shift.outletId,
-          status: 'BERHASIL',
-          createdAt: { gte: shift.openedAt },
-        },
+        where: { ...tenantFilter, outletId: shift.outletId, status: 'BERHASIL', createdAt: { gte: shift.openedAt } },
         _sum: { total: true },
       }),
       prisma.order.aggregate({
-        where: {
-          status: 'COMPLETED',
-          table: { outletId: shift.outletId },
-          createdAt: { gte: shift.openedAt },
-        },
+        where: { status: 'COMPLETED', table: { outletId: shift.outletId, ...outletTenantFilter }, createdAt: { gte: shift.openedAt } },
         _sum: { totalAmount: true },
       }),
     ]);
 
-    const salesTotal  = (txSum._sum.total ?? 0) + (orderSum._sum.totalAmount ?? 0);
+    const salesTotal    = (txSum._sum.total ?? 0) + (orderSum._sum.totalAmount ?? 0);
     const systemBalance = shift.openingBalance + salesTotal;
     const difference    = closingBalance - systemBalance;
 
     const updated = await prisma.shift.update({
       where: { id: shiftId },
       data: {
-        closedAt: new Date(),
-        closingBalance,
-        systemBalance,
-        difference,
-        notes,
-        status: 'CLOSED',
+        closedAt: new Date(), closingBalance,
+        systemBalance, difference, notes, status: 'CLOSED',
       },
     });
 

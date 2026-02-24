@@ -42,13 +42,23 @@ export const Navbar = () => {
   const isAdmin = user?.role === 'ADMIN';
 
   // ─── Load outlet list untuk SUPERADMIN ─────────────────────────────────────
-  useEffect(() => {
+  const fetchOutlets = () => {
     if (isSuperAdmin) {
       fetch('/api/outlets')
         .then((r) => r.json())
         .then((d) => setOutlets(d.outlets ?? []))
         .catch(() => {});
     }
+  };
+
+  useEffect(() => {
+    fetchOutlets();
+  }, [isSuperAdmin]);
+
+  // ─── Listen for outlet updates ──────────────────────────────────────────────
+  useEffect(() => {
+    window.addEventListener('outlets-updated', fetchOutlets);
+    return () => window.removeEventListener('outlets-updated', fetchOutlets);
   }, [isSuperAdmin]);
 
   // ─── Load menu permissions dari API ────────────────────────────────────────

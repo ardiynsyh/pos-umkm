@@ -1,21 +1,31 @@
+// app/api/products/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  const role = req.headers.get('x-user-role');
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    const { searchParams } = new URL(request.url);
-    const search = searchParams.get('search');
+    const { searchParams } = new URL(req.url);
+    const search   = searchParams.get('search');
     const outletId = searchParams.get('outletId');
+
+    const tenantFilter = tenantId ? { tenantId } : {};
 
     if (search) {
       const product = await prisma.product.findFirst({
         where: {
+          ...tenantFilter,
           OR: [
             { barcode: search },
             { sku: search },
             { nama: { contains: search, mode: 'insensitive' } },
           ],
-          ...(outletId ? { outletId } : {}),
+          ...(outletId && { outletId }),
         },
         include: { category: true },
       });
@@ -23,52 +33,44 @@ export async function GET(request: NextRequest) {
     }
 
     const products = await prisma.product.findMany({
-      where: {
-        ...(outletId ? { outletId } : {}),
-      },
+      where: { ...tenantFilter, ...(outletId && { outletId }) },
       include: { category: true },
       orderBy: { createdAt: 'desc' },
     });
 
     return NextResponse.json({ products });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: 'Failed to fetch products' }, { status: 500 });
   }
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { nama, barcode, hargaJual, stok, categoryId, foto } = body;
+export async function POST(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  if (!tenantId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
 
-    // Validasi
+  try {
+    const { nama, barcode, hargaJual, stok, categoryId, foto } = await req.json();
     if (!nama || !hargaJual || !categoryId) {
-      return NextResponse.json(
-        { error: 'Nama, harga, dan kategori harus diisi' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Nama, harga, dan kategori harus diisi' }, { status: 400 });
     }
 
-    // Ambil outlet pertama (sesuaikan jika pakai auth)
-    const outlet = await prisma.outlet.findFirst();
+    // Ambil outlet milik tenant ini
+    const outlet = await prisma.outlet.findFirst({ where: { tenantId } });
     if (!outlet) {
       return NextResponse.json({ error: 'Outlet tidak ditemukan' }, { status: 400 });
     }
 
-    // Generate SKU otomatis
-    const count = await prisma.product.count();
+    const count = await prisma.product.count({ where: { tenantId } });
     const sku = `SKU-${String(count + 1).padStart(5, '0')}`;
 
     const product = await prisma.product.create({
       data: {
-        nama,
-        sku,
-        barcode: barcode || null,
-        hargaJual,
-        hargaBeli: 0,
-        stok,
-        categoryId,
+        nama, sku, barcode: barcode || null, hargaJual,
+        hargaBeli: 0, stok, categoryId,
         outletId: outlet.id,
+        tenantId,          // ← inject tenantId
         foto: foto || null,
       },
       include: { category: true },

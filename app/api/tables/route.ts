@@ -1,11 +1,20 @@
-import { NextResponse } from 'next/server';
+// app/api/tables/route.ts
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-// GET semua meja
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  const role = req.headers.get('x-user-role');
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const tables = await prisma.table.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        ...(tenantId && { outlet: { tenantId } }),
+      },
       orderBy: { number: 'asc' },
     });
     return NextResponse.json(tables);
@@ -14,8 +23,12 @@ export async function GET() {
   }
 }
 
-// POST tambah meja baru
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  if (!tenantId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
     const number = Number(body.number);
@@ -25,23 +38,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ message: 'Nomor meja tidak valid' }, { status: 400 });
     }
 
-    // use upsert to create or update table atomically and avoid unique constraint errors
+    // Gunakan outletId dari body atau ambil outlet pertama milik tenant
+    let outletId = body.outletId;
+    if (!outletId) {
+      const outlet = await prisma.outlet.findFirst({ where: { tenantId } });
+      outletId = outlet?.id;
+    }
+
     const table = await prisma.table.upsert({
       where: { number },
       update: { label, isActive: true },
-      create: { number, label, isActive: true, outletId: body.outletId },
+      create: { number, label, isActive: true, outletId },
     });
     return NextResponse.json(table);
   } catch (error: any) {
-    // log the error to server console for debugging
-    // eslint-disable-next-line no-console
     console.error('POST /api/tables error', error);
-
-    // handle unique constraint (nomor meja unik)
     if (error?.code === 'P2002') {
       return NextResponse.json({ message: 'Nomor meja sudah terdaftar' }, { status: 409 });
     }
-
     return NextResponse.json({ message: 'Gagal menambah meja' }, { status: 500 });
   }
 }

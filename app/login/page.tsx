@@ -1,5 +1,5 @@
+// app/login/page.tsx
 'use client';
-
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore } from '@/lib/store/authStore';
@@ -9,7 +9,6 @@ import { LogIn, Store } from 'lucide-react';
 export default function LoginPage() {
   const router = useRouter();
   const login = useAuthStore((state) => state.login);
-
   const [formData, setFormData] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -18,21 +17,17 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     setIsLoading(true);
-
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData),
       });
-
       const data = await res.json();
-
       if (!res.ok) {
         setError(data.message || 'Login gagal');
         return;
       }
-
       login(data.user);
       router.push('/dashboard');
     } catch (err) {
@@ -68,7 +63,6 @@ export default function LoginPage() {
                 required
               />
             </div>
-
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
                 Password
@@ -98,6 +92,14 @@ export default function LoginPage() {
               <LogIn className="w-5 h-5" />
               {isLoading ? 'Memproses...' : 'Login'}
             </Button>
+
+            {/* ← Tambahan: link ke halaman register */}
+            <p className="text-center text-sm text-gray-500">
+              Belum punya akun?{' '}
+              <a href="/register" className="text-blue-600 font-medium hover:underline">
+                Daftar di sini
+              </a>
+            </p>
           </form>
         </div>
 

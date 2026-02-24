@@ -16,13 +16,18 @@
   "dependencies": {
     "@prisma/adapter-neon": "^7.4.1",
     "@prisma/client": "5.11.0",
+    "@types/js-cookie": "^3.0.6",
+    "bcrypt": "^6.0.0",
+    "bcryptjs": "^3.0.3",
     "class-variance-authority": "0.7.0",
     "clsx": "^2.1.0",
     "date-fns": "^3.3.1",
     "dexie-react-hooks": "1.1.7",
     "exceljs": "^4.4.0",
+    "js-cookie": "^3.0.5",
     "lucide-react": "^0.564.0",
     "midtrans-client": "^1.4.3",
+    "nanoid": "^5.1.6",
     "next": "^15.1.0",
     "next-pwa": "5.6.0",
     "qrcode.react": "^4.2.0",
@@ -33,6 +38,8 @@
     "zustand": "^4.5.7"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/bcryptjs": "^2.4.6",
     "@types/midtrans-client": "^1.4.0",
     "@types/node": "20.11.30",
     "@types/react": "19.0.0",

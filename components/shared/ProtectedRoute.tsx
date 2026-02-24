@@ -6,8 +6,8 @@ import { useAuthStore } from '@/lib/store/authStore';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requireOwner?: boolean;      // hanya SUPERADMIN & ADMIN
-  requireSuperAdmin?: boolean; // hanya SUPERADMIN
+  requireOwner?: boolean;
+  requireSuperAdmin?: boolean;
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
@@ -19,9 +19,8 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   const { user, isAuthenticated, _hasHydrated } = useAuthStore();
 
   const isSuperAdmin = user?.role === 'SUPERADMIN';
-  const isAdmin = user?.role === 'ADMIN';
-
-  const hasOwnerAccess = isSuperAdmin || isAdmin;
+  const isAdmin      = user?.role === 'ADMIN';
+  const hasOwnerAccess      = isSuperAdmin || isAdmin;
   const hasSuperAdminAccess = isSuperAdmin;
 
   useEffect(() => {
@@ -40,8 +39,11 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     if (requireOwner && !hasOwnerAccess) {
       router.push('/dashboard');
     }
-  }, [_hasHydrated, isAuthenticated, user, router, requireOwner, requireSuperAdmin]);
+  // ✅ Hapus `user` dan `router` dari deps — keduanya tidak stabil
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [_hasHydrated, isAuthenticated, hasSuperAdminAccess, hasOwnerAccess]);
 
+  // Belum rehidrasi atau belum login → tampilkan loading
   if (!_hasHydrated || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">

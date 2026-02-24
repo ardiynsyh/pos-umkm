@@ -1,0 +1,1658 @@
+﻿
+
+// ========== app/api/categories/route.ts ==========
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET() {
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: { nama: 'asc' },
+    });
+    return NextResponse.json({ categories });
+  } catch (error) {
+    return NextResponse.json({ error: 'Gagal memuat kategori' }, { status: 500 });
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const { nama, deskripsi } = await request.json();
+    if (!nama) {
+      return NextResponse.json({ error: 'Nama kategori harus diisi' }, { status: 400 });
+    }
+    const category = await prisma.category.create({
+      data: { nama, deskripsi: deskripsi || null },
+    });
+    return NextResponse.json({ category });
+  } catch (error) {
+    return NextResponse.json({ error: 'Gagal membuat kategori' }, { status: 500 });
+  }
+}
+
+
+// ========== app/api/dashboard/stats/route.ts ==========
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET() {
+  try {
+    // Get today's date range
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Total penjualan hari ini
+    const todaySales = await prisma.transaction.aggregate({
+      where: {
+        createdAt: {
+          gte: today,
+          lt: tomorrow,
+        },
+        status: 'BERHASIL',
+      },
+      _sum: {
+        totalBayar: true,
+      },
+      _count: true,
+    });
+
+    // Total penjualan bulan ini
+    const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const monthlySales = await prisma.transaction.aggregate({
+      where: {
+        createdAt: {
+          gte: firstDayOfMonth,
+        },
+        status: 'BERHASIL',
+      },
+      _sum: {
+        totalBayar: true,
+      },
+      _count: true,
+    });
+
+    // Produk terlaris
+    const topProducts = await prisma.transactionItem.groupBy({
+      by: ['productId', 'namaProduk'],
+      _sum: {
+        quantity: true,
+        subtotal: true,
+      },
+      orderBy: {
+        _sum: {
+          quantity: 'desc',
+        },
+      },
+      take: 5,
+    });
+
+    // Stok menipis
+    const lowStock = await prisma.product.findMany({
+      where: {
+        stok: {
+          lte: prisma.product.fields.stokMinimal,
+        },
+      },
+      select: {
+        id: true,
+        nama: true,
+        sku: true,
+        stok: true,
+        stokMinimal: true,
+      },
+      take: 10,
+    });
+
+    // Total produk
+    const totalProducts = await prisma.product.count();
+
+    return NextResponse.json({
+      todaySales: {
+        total: todaySales._sum.totalBayar || 0,
+        count: todaySales._count,
+      },
+      monthlySales: {
+        total: monthlySales._sum.totalBayar || 0,
+        count: monthlySales._count,
+      },
+      topProducts,
+      lowStock,
+      totalProducts,
+    });
+  } catch (error) {
+    console.error('Stats error:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch stats' },
+      { status: 500 }
+    );
+  }
+}
+
+// ========== app/api/laporan/route.ts ==========
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const filter = searchParams.get('filter') || 'today';
+    const customDay = searchParams.get('day');
+    const customMonth = searchParams.get('month');
+    const customYear = searchParams.get('year');
+
+    // â”€â”€â”€ Tentukan rentang tanggal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const now = new Date();
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (filter === 'today') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    } else if (filter === 'week') {
+      startDate = new Date(now);
+      startDate.setDate(now.getDate() - 7);
+      startDate.setHours(0, 0, 0, 0);
+    } else if (filter === 'month') {
+      startDate = new Date(now);
+      startDate.setDate(now.getDate() - 30);
+      startDate.setHours(0, 0, 0, 0);
+    } else if (filter === 'custom' && customMonth && customYear) {
+      const yr = parseInt(customYear);
+      const mo = parseInt(customMonth) - 1;
+      if (customDay) {
+        const dy = parseInt(customDay);
+        startDate = new Date(yr, mo, dy, 0, 0, 0);
+        endDate = new Date(yr, mo, dy, 23, 59, 59);
+      } else {
+        startDate = new Date(yr, mo, 1, 0, 0, 0);
+        endDate = new Date(yr, mo + 1, 0, 23, 59, 59);
+      }
+    }
+
+    const dateFilter = {
+      ...(startDate && { gte: startDate }),
+      ...(endDate && { lte: endDate }),
+    };
+
+    // â”€â”€â”€ Ambil dari tabel transactions (kasir manual) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const transactions = await prisma.transaction.findMany({
+      where: {
+        status: 'BERHASIL',
+        ...(startDate && { createdAt: dateFilter }),
+      },
+      include: { items: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // â”€â”€â”€ Ambil dari tabel orders (order customer) yang COMPLETED â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const orders = await prisma.order.findMany({
+      where: {
+        status: 'COMPLETED',
+        ...(startDate && { createdAt: dateFilter }),
+      },
+      include: { items: true, table: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // â”€â”€â”€ Map metode pembayaran enum ke string â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const mapPaymentMethod = (method: string) => {
+      const map: Record<string, string> = {
+        TUNAI: 'cash',
+        DEBIT: 'card',
+        KREDIT: 'card',
+        QRIS: 'qris',
+        TRANSFER: 'transfer',
+        cash: 'cash',
+        qris: 'qris',
+        transfer: 'transfer',
+        ewallet: 'ewallet',
+        midtrans: 'card',
+      };
+      return map[method] || 'cash';
+    };
+
+    // â”€â”€â”€ Normalize transactions ke format seragam â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const normalizedTransactions = transactions.map((t) => ({
+      id: t.id,
+      transactionNumber: t.nomorTransaksi,
+      source: 'kasir' as const,
+      total: t.total,
+      paymentMethod: mapPaymentMethod(t.metodePembayaran),
+      cashierName: t.kasir || 'Kasir',
+      customerName: t.pelanggan || '',
+      tableInfo: '',
+      paymentAmount: t.uangDibayar,
+      change: t.kembalian,
+      createdAt: t.createdAt,
+      items: t.items.map((item) => ({
+        productName: item.namaProduk,
+        quantity: item.quantity,
+        price: item.hargaSatuan,
+        subtotal: item.subtotal,
+      })),
+    }));
+
+    // â”€â”€â”€ Normalize orders ke format seragam â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const normalizedOrders = orders.map((o) => ({
+      id: o.id,
+      transactionNumber: o.orderNumber,
+      source: 'customer' as const,
+      total: o.totalAmount,
+      paymentMethod: mapPaymentMethod(o.paymentMethod || 'cash'),
+      cashierName: 'Customer Order',
+      customerName: o.customerName || '',
+      tableInfo: o.table?.label || '',
+      paymentAmount: o.totalAmount,
+      change: 0,
+      createdAt: o.createdAt,
+      items: o.items.map((item) => ({
+        productName: item.productName,
+        quantity: item.quantity,
+        price: item.price,
+        subtotal: item.subtotal,
+      })),
+    }));
+
+    // â”€â”€â”€ Gabungkan & urutkan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const combined = [...normalizedTransactions, ...normalizedOrders].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    // â”€â”€â”€ Hitung stats â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const totalRevenue = combined.reduce((s, t) => s + t.total, 0);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayRevenue = combined
+      .filter((t) => new Date(t.createdAt) >= todayStart)
+      .reduce((s, t) => s + t.total, 0);
+
+    return NextResponse.json({
+      transactions: combined,
+      stats: {
+        totalRevenue,
+        totalTransactions: combined.length,
+        averageTransaction: combined.length > 0 ? totalRevenue / combined.length : 0,
+        todayRevenue,
+      },
+    });
+  } catch (error) {
+    console.error('Laporan error:', error);
+    return NextResponse.json({ message: 'Gagal memuat laporan' }, { status: 500 });
+  }
+}
+
+
+// ========== app/api/laporan/export/route.ts ==========
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import ExcelJS from 'exceljs';
+
+const mapPaymentMethod = (method: string) => {
+  const map: Record<string, string> = {
+    TUNAI: 'Tunai', DEBIT: 'Kartu Debit', KREDIT: 'Kartu Kredit',
+    QRIS: 'QRIS', TRANSFER: 'Transfer',
+    cash: 'Tunai', qris: 'QRIS', transfer: 'Transfer',
+    ewallet: 'E-Wallet', midtrans: 'Midtrans', card: 'Kartu',
+  };
+  return map[method] || method;
+};
+
+const formatDate = (d: Date) => {
+  const date = new Date(d);
+  const dd   = String(date.getDate()).padStart(2, '0');
+  const mm   = String(date.getMonth() + 1).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  const hh   = String(date.getHours()).padStart(2, '0');
+  const min  = String(date.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+};
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const filter      = searchParams.get('filter') || 'today';
+    const customDay   = searchParams.get('day');
+    const customMonth = searchParams.get('month');
+    const customYear  = searchParams.get('year');
+
+    // â”€â”€â”€ Rentang tanggal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const now = new Date();
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (filter === 'today') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      endDate   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    } else if (filter === 'week') {
+      startDate = new Date(now); startDate.setDate(now.getDate() - 7); startDate.setHours(0,0,0,0);
+    } else if (filter === 'month') {
+      startDate = new Date(now); startDate.setDate(now.getDate() - 30); startDate.setHours(0,0,0,0);
+    } else if (filter === 'custom' && customMonth && customYear) {
+      const yr = parseInt(customYear), mo = parseInt(customMonth) - 1;
+      if (customDay) {
+        const dy = parseInt(customDay);
+        startDate = new Date(yr, mo, dy, 0, 0, 0);
+        endDate   = new Date(yr, mo, dy, 23, 59, 59);
+      } else {
+        startDate = new Date(yr, mo, 1, 0, 0, 0);
+        endDate   = new Date(yr, mo + 1, 0, 23, 59, 59);
+      }
+    }
+
+    const dateFilter = {
+      ...(startDate && { gte: startDate }),
+      ...(endDate   && { lte: endDate }),
+    };
+
+    // â”€â”€â”€ Ambil data dari DB â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const [transactions, orders] = await Promise.all([
+      prisma.transaction.findMany({
+        where: { status: 'BERHASIL', ...(startDate && { createdAt: dateFilter }) },
+        include: { items: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.order.findMany({
+        where: { status: 'COMPLETED', ...(startDate && { createdAt: dateFilter }) },
+        include: { items: true, table: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    // â”€â”€â”€ Buat workbook â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'POS UMKM';
+    wb.created = new Date();
+
+    const ws = wb.addWorksheet('Laporan Transaksi', {
+      pageSetup: { fitToPage: true, orientation: 'landscape' },
+    });
+
+    // â”€â”€â”€ Judul laporan â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const filterLabel: Record<string, string> = {
+      today: 'Hari Ini', week: '7 Hari Terakhir',
+      month: '30 Hari Terakhir', custom: 'Periode Custom',
+    };
+    ws.mergeCells('A1:K1');
+    const titleCell = ws.getCell('A1');
+    titleCell.value = `LAPORAN TRANSAKSI â€” ${filterLabel[filter] ?? filter}`;
+    titleCell.font  = { name: 'Arial', bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } };
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+    ws.getRow(1).height = 32;
+
+    ws.mergeCells('A2:K2');
+    const subCell = ws.getCell('A2');
+    subCell.value = `Dicetak: ${formatDate(now)}`;
+    subCell.font  = { name: 'Arial', size: 9, italic: true, color: { argb: 'FF6B7280' } };
+    subCell.alignment = { horizontal: 'center' };
+    ws.getRow(2).height = 18;
+
+    ws.addRow([]); // baris kosong pemisah
+
+    // â”€â”€â”€ Header kolom â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const HEADER_ROW = 4;
+    const headers = [
+      { header: 'No Transaksi',         width: 22 },
+      { header: 'Sumber',               width: 16 },
+      { header: 'Tanggal',              width: 20 },
+      { header: 'Kasir / Customer',     width: 20 },
+      { header: 'Meja',                 width: 10 },
+      { header: 'Produk',               width: 28 },
+      { header: 'Qty',                  width: 8  },
+      { header: 'Harga Satuan (Rp)',    width: 20 },
+      { header: 'Subtotal Produk (Rp)', width: 22 },
+      { header: 'Total Transaksi (Rp)', width: 22 },
+      { header: 'Metode Pembayaran',    width: 20 },
+    ];
+
+    headers.forEach((h, i) => { ws.getColumn(i + 1).width = h.width; });
+
+    const headerRow = ws.getRow(HEADER_ROW);
+    headers.forEach((h, i) => {
+      const cell = headerRow.getCell(i + 1);
+      cell.value = h.header;
+      cell.font  = { name: 'Arial', bold: true, size: 10, color: { argb: 'FFFFFFFF' } };
+      cell.fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1D4ED8' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+      cell.border = {
+        top:    { style: 'thin', color: { argb: 'FFBFDBFE' } },
+        bottom: { style: 'thin', color: { argb: 'FFBFDBFE' } },
+        left:   { style: 'thin', color: { argb: 'FFBFDBFE' } },
+        right:  { style: 'thin', color: { argb: 'FFBFDBFE' } },
+      };
+    });
+    headerRow.height = 28;
+
+    // â”€â”€â”€ Style helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const rupiahFmt = '#,##0';
+    const borderStyle: Partial<ExcelJS.Borders> = {
+      top:    { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      left:   { style: 'thin', color: { argb: 'FFE5E7EB' } },
+      right:  { style: 'thin', color: { argb: 'FFE5E7EB' } },
+    };
+
+    const styleDataRow = (row: ExcelJS.Row, isAlt: boolean) => {
+      const bg = isAlt ? 'FFF0F4FF' : 'FFFFFFFF';
+      row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+        cell.font   = { name: 'Arial', size: 10 };
+        cell.fill   = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+        cell.border = borderStyle;
+        if (colNum >= 7) cell.alignment = { horizontal: 'right',  vertical: 'middle' };
+        else             cell.alignment = { horizontal: colNum === 1 ? 'left' : 'center', vertical: 'middle' };
+      });
+      row.height = 22;
+    };
+
+    // â”€â”€â”€ Baris data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    let rowIndex  = HEADER_ROW + 1;
+    let altToggle = false;
+    let grandTotal = 0;
+
+    for (const t of transactions) {
+      grandTotal += t.total;
+      for (const item of t.items) {
+        const row = ws.getRow(rowIndex++);
+        row.values = [
+          t.nomorTransaksi, 'Kasir', formatDate(t.createdAt),
+          t.kasir || 'Kasir', '-', item.namaProduk,
+          item.quantity, item.hargaSatuan, item.subtotal,
+          t.total, mapPaymentMethod(t.metodePembayaran),
+        ];
+        [8, 9, 10].forEach((col) => { row.getCell(col).numFmt = rupiahFmt; });
+        styleDataRow(row, altToggle);
+        altToggle = !altToggle;
+      }
+    }
+
+    for (const o of orders) {
+      grandTotal += o.totalAmount;
+      for (const item of o.items) {
+        const row = ws.getRow(rowIndex++);
+        row.values = [
+          o.orderNumber, 'Customer Order', formatDate(o.createdAt),
+          o.customerName || 'Guest', o.table?.label || '-', item.productName,
+          item.quantity, item.price, item.subtotal,
+          o.totalAmount, mapPaymentMethod(o.paymentMethod || 'cash'),
+        ];
+        [8, 9, 10].forEach((col) => { row.getCell(col).numFmt = rupiahFmt; });
+        styleDataRow(row, altToggle);
+        altToggle = !altToggle;
+      }
+    }
+
+    // â”€â”€â”€ Baris total â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    ws.addRow([]);
+    const totalRow = ws.addRow(['', '', '', '', '', '', '', '', 'TOTAL KESELURUHAN', grandTotal, '']);
+    totalRow.getCell(9).font      = { name: 'Arial', bold: true, size: 11 };
+    totalRow.getCell(9).alignment = { horizontal: 'right' };
+    totalRow.getCell(10).font     = { name: 'Arial', bold: true, size: 11, color: { argb: 'FF1E40AF' } };
+    totalRow.getCell(10).numFmt   = rupiahFmt;
+    totalRow.getCell(10).fill     = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
+    totalRow.height = 26;
+
+    // â”€â”€â”€ Freeze header â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    ws.views = [{ state: 'frozen', xSplit: 0, ySplit: HEADER_ROW, topLeftCell: 'A5' }];
+
+    // â”€â”€â”€ Kirim sebagai file .xlsx â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    const buffer = await wb.xlsx.writeBuffer();
+    const filterSlug: Record<string, string> = {
+    today: 'hari-ini',
+    week: '7-hari',
+    month: '30-hari',
+    custom: 'custom',
+    };
+    
+    const filename = `laporan-${filterSlug[filter] ?? filter}-${now.toISOString().slice(0, 10)}.xlsx`;
+
+    // Gunakan Response standar (atau NextResponse tanpa casting)
+    return new Response(buffer, {
+    status: 200,
+    headers: {
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+    });
+  } catch (error) {
+    console.error('Export laporan error:', error);
+    return NextResponse.json({ message: 'Gagal export laporan' }, { status: 500 });
+  }
+}
+
+// ========== app/api/menu-permissions/route.ts ==========
+// app/api/menu-permissions/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { ALL_MENUS, CONFIGURABLE_ROLES } from '@/lib/menu-permissions';
+
+// GET /api/menu-permissions
+export async function GET() {
+  try {
+    const permissions = await prisma.menuPermission.findMany();
+
+    const result: Record<string, Record<string, boolean>> = {};
+
+    for (const role of CONFIGURABLE_ROLES) {
+      result[role] = {};
+      for (const menu of ALL_MENUS) {
+        const perm = permissions.find(
+          (p) => p.role === role && p.menuKey === menu.key
+        );
+        result[role][menu.key] = perm ? perm.isEnabled : true;
+      }
+    }
+
+    return NextResponse.json({ permissions: result });
+  } catch (error) {
+    console.error('[GET /api/menu-permissions]', error);
+    return NextResponse.json({ error: 'Gagal mengambil data' }, { status: 500 });
+  }
+}
+
+// PUT /api/menu-permissions
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { role, menuKey, isEnabled } = body;
+
+    if (!role || !menuKey || typeof isEnabled !== 'boolean') {
+      return NextResponse.json({ error: 'Data tidak valid' }, { status: 400 });
+    }
+
+    if (!CONFIGURABLE_ROLES.includes(role)) {
+      return NextResponse.json({ error: 'Role tidak bisa dikonfigurasi' }, { status: 400 });
+    }
+
+    const permission = await prisma.menuPermission.upsert({
+      where: { menuKey_role: { menuKey, role } },
+      update: { isEnabled },
+      create: { menuKey, role, isEnabled },
+    });
+
+    return NextResponse.json({ permission });
+  } catch (error) {
+    console.error('[PUT /api/menu-permissions]', error);
+    return NextResponse.json({ error: 'Gagal menyimpan data' }, { status: 500 });
+  }
+}
+
+// ========== app/api/orders/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+import { OrderStatus, PaymentStatus } from '@prisma/client';
+
+// GET semua order hari ini
+export async function GET() {
+  try {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    const orders = await prisma.order.findMany({
+      where: { 
+        createdAt: { gte: startOfDay } 
+      },
+      include: { 
+        table: {
+          include: {
+            outlet: true
+          }
+        }, 
+        items: true // Items tanpa include product dulu
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      orders 
+    });
+  } catch (error) {
+    console.error('Error fetching orders:', error);
+    return NextResponse.json({ 
+      success: false,
+      error: 'Gagal memuat pesanan' 
+    }, { status: 500 });
+  }
+}
+
+// POST untuk membuat order baru
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { 
+      tableId, 
+      customerName, 
+      items, 
+      totalAmount,
+      outletId 
+    } = body;
+
+    // Validasi
+    if (!tableId || !items || !items.length) {
+      return NextResponse.json(
+        { error: 'Data tidak lengkap' },
+        { status: 400 }
+      );
+    }
+
+    // Generate order number
+    const orderCount = await prisma.order.count();
+    const orderNumber = `ORD-${String(orderCount + 1).padStart(3, '0')}`;
+
+    // Buat order
+    const order = await prisma.order.create({
+      data: {
+        orderNumber,
+        tableId,
+        customerName: customerName || null,
+        status: OrderStatus.PENDING,
+        paymentStatus: PaymentStatus.UNPAID,
+        totalAmount,
+        items: {
+          create: items.map((item: any) => ({
+            productId: item.productId,
+            productName: item.productName,
+            price: item.price,
+            quantity: item.quantity,
+            subtotal: item.price * item.quantity
+          }))
+        }
+      },
+      include: {
+        table: true,
+        items: true
+      }
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      order 
+    }, { status: 201 });
+
+  } catch (error: any) {
+    console.error('Error creating order:', error);
+    return NextResponse.json(
+      { error: 'Gagal membuat pesanan: ' + error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// PUT untuk update status order
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { orderId, status, paymentStatus, paymentMethod } = body;
+
+    const updateData: any = {};
+    
+    if (status) updateData.status = status;
+    if (paymentStatus) updateData.paymentStatus = paymentStatus;
+    if (paymentMethod) updateData.paymentMethod = paymentMethod;
+
+    const order = await prisma.order.update({
+      where: { id: orderId },
+      data: updateData,
+      include: {
+        table: true,
+        items: true
+      }
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      order 
+    });
+
+  } catch (error: any) {
+    console.error('Error updating order:', error);
+    return NextResponse.json(
+      { error: 'Gagal update pesanan: ' + error.message },
+      { status: 500 }
+    );
+  }
+}
+
+// ========== app/api/outlets/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET() {
+  try {
+    const outlets = await prisma.outlet.findMany({
+      include: {
+        _count: { select: { users: true, products: true, tables: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return NextResponse.json({ outlets });
+  } catch {
+    return NextResponse.json({ message: 'Gagal memuat outlets' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { nama, alamat, telepon } = await request.json();
+    if (!nama) return NextResponse.json({ message: 'Nama outlet harus diisi' }, { status: 400 });
+
+    const outlet = await prisma.outlet.create({
+      data: { nama, alamat: alamat || null, telepon: telepon || null },
+    });
+
+    return NextResponse.json({ outlet });
+  } catch {
+    return NextResponse.json({ message: 'Gagal membuat outlet' }, { status: 500 });
+  }
+}
+
+// ========== app/api/pembelian/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const bulan = searchParams.get('bulan');
+
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+    if (bulan) {
+      startDate = new Date(`${bulan}-01`);
+      endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 1);
+    }
+
+    const pembelian = await prisma.pembelian.findMany({
+      where: startDate && endDate ? { tanggal: { gte: startDate, lt: endDate } } : {},
+      include: {
+        supplier: { select: { nama: true } },
+        items: { include: { product: { select: { nama: true } } } },
+      },
+      orderBy: { tanggal: 'desc' },
+    });
+
+    return NextResponse.json({ pembelian });
+  } catch {
+    return NextResponse.json({ message: 'Gagal memuat pembelian' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { supplierId, tanggal, items, total, dibayar, keterangan } = await request.json();
+
+    if (!supplierId || !items?.length) {
+      return NextResponse.json({ message: 'Supplier dan item harus diisi' }, { status: 400 });
+    }
+
+    const outlet = await prisma.outlet.findFirst();
+    if (!outlet) return NextResponse.json({ message: 'Outlet tidak ditemukan' }, { status: 400 });
+
+    const totalDibayar = parseFloat(dibayar) || 0;
+    const sisaHutang = Math.max(0, total - totalDibayar);
+    const status = sisaHutang === 0 ? 'LUNAS' : totalDibayar > 0 ? 'SEBAGIAN' : 'BELUM_LUNAS';
+
+    // Gunakan transaction Prisma agar atomic
+    const pembelian = await prisma.$transaction(async (tx) => {
+      // 1. Buat record pembelian
+      const newPembelian = await tx.pembelian.create({
+        data: {
+          tanggal: new Date(tanggal),
+          supplierId,
+          total,
+          dibayar: totalDibayar,
+          sisaHutang,
+          status,
+          keterangan: keterangan || null,
+          outletId: outlet.id,
+          items: {
+            create: items.map((item: any) => ({
+              productId: item.productId,
+              jumlah: item.jumlah,
+              hargaBeli: item.hargaBeli,
+              subtotal: item.subtotal,
+            })),
+          },
+        },
+        include: { supplier: true, items: { include: { product: true } } },
+      });
+
+      // 2. Update stok produk (otomatis bertambah)
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: {
+            stok: { increment: item.jumlah },
+            hargaBeli: item.hargaBeli, // update harga beli terakhir
+          },
+        });
+      }
+
+      // 3. Update hutang supplier
+      if (sisaHutang > 0) {
+        await tx.supplier.update({
+          where: { id: supplierId },
+          data: { hutang: { increment: sisaHutang } },
+        });
+      }
+
+      return newPembelian;
+    });
+
+    return NextResponse.json({ pembelian });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ message: 'Gagal menyimpan pembelian' }, { status: 500 });
+  }
+}
+
+
+// ========== app/api/pengeluaran/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const bulan = searchParams.get('bulan'); // format: YYYY-MM
+
+    let startDate: Date | undefined;
+    let endDate: Date | undefined;
+
+    if (bulan) {
+      startDate = new Date(`${bulan}-01`);
+      endDate = new Date(startDate);
+      endDate.setMonth(endDate.getMonth() + 1);
+    }
+
+    const data = await prisma.pengeluaran.findMany({
+      where: {
+        ...(startDate && endDate ? {
+          tanggal: { gte: startDate, lt: endDate }
+        } : {}),
+      },
+      orderBy: { tanggal: 'desc' },
+    });
+
+    // Format tanggal ke ISO string untuk frontend
+    const formatted = data.map((item) => ({
+      ...item,
+      tanggal: item.tanggal.toISOString().slice(0, 10),
+      createdAt: item.createdAt.toISOString(),
+    }));
+
+    return NextResponse.json({ data: formatted });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ message: 'Gagal memuat pengeluaran' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { tanggal, kategori, keterangan, jumlah } = await request.json();
+
+    if (!tanggal || !kategori || !keterangan || !jumlah) {
+      return NextResponse.json({ message: 'Semua field harus diisi' }, { status: 400 });
+    }
+
+    const item = await prisma.pengeluaran.create({
+      data: {
+        tanggal: new Date(tanggal),
+        kategori,
+        keterangan,
+        jumlah: Number(jumlah),
+      },
+    });
+
+    return NextResponse.json({ data: item });
+  } catch (error) {
+    return NextResponse.json({ message: 'Gagal menyimpan pengeluaran' }, { status: 500 });
+  }
+}
+
+// ========== app/api/products/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const search = searchParams.get('search');
+    const outletId = searchParams.get('outletId');
+
+    if (search) {
+      const product = await prisma.product.findFirst({
+        where: {
+          OR: [
+            { barcode: search },
+            { sku: search },
+            { nama: { contains: search, mode: 'insensitive' } },
+          ],
+          ...(outletId ? { outletId } : {}),
+        },
+        include: { category: true },
+      });
+      return NextResponse.json({ product });
+    }
+
+    const products = await prisma.product.findMany({
+      where: {
+        ...(outletId ? { outletId } : {}),
+      },
+      include: { category: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return NextResponse.json({ products });
+  } catch (error) {
+    return NextResponse.json({ error: 'Failed to fetch products' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const { nama, barcode, hargaJual, stok, categoryId, foto } = body;
+
+    // Validasi
+    if (!nama || !hargaJual || !categoryId) {
+      return NextResponse.json(
+        { error: 'Nama, harga, dan kategori harus diisi' },
+        { status: 400 }
+      );
+    }
+
+    // Ambil outlet pertama (sesuaikan jika pakai auth)
+    const outlet = await prisma.outlet.findFirst();
+    if (!outlet) {
+      return NextResponse.json({ error: 'Outlet tidak ditemukan' }, { status: 400 });
+    }
+
+    // Generate SKU otomatis
+    const count = await prisma.product.count();
+    const sku = `SKU-${String(count + 1).padStart(5, '0')}`;
+
+    const product = await prisma.product.create({
+      data: {
+        nama,
+        sku,
+        barcode: barcode || null,
+        hargaJual,
+        hargaBeli: 0,
+        stok,
+        categoryId,
+        outletId: outlet.id,
+        foto: foto || null,
+      },
+      include: { category: true },
+    });
+
+    return NextResponse.json({ product });
+  } catch (error: any) {
+    console.error('Error creating product:', error);
+    if (error.code === 'P2002') {
+      return NextResponse.json({ error: 'Barcode sudah digunakan' }, { status: 400 });
+    }
+    return NextResponse.json({ error: 'Gagal menyimpan produk' }, { status: 500 });
+  }
+}
+
+
+// ========== app/api/sales-target/route.ts ==========
+// app/api/sales-target/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+// GET /api/sales-target?outletId=xxx&year=2026&month=2
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const outletId = searchParams.get('outletId');
+    const year     = parseInt(searchParams.get('year')  ?? String(new Date().getFullYear()));
+    const month    = parseInt(searchParams.get('month') ?? String(new Date().getMonth() + 1));
+
+    if (!outletId) return NextResponse.json({ error: 'outletId required' }, { status: 400 });
+
+    const targets = await prisma.salesTarget.findMany({
+      where: { outletId, year, month },
+    });
+
+    // Hitung actual penjualan bulan ini
+    const startOfMonth = new Date(year, month - 1, 1);
+    const endOfMonth   = new Date(year, month, 0, 23, 59, 59);
+
+    const [transactionSum, orderSum] = await Promise.all([
+      prisma.transaction.aggregate({
+        where: { outletId, status: 'BERHASIL', createdAt: { gte: startOfMonth, lte: endOfMonth } },
+        _sum: { total: true },
+      }),
+      prisma.order.aggregate({
+        where: {
+          status: 'COMPLETED',
+          table: { outletId },
+          createdAt: { gte: startOfMonth, lte: endOfMonth },
+        },
+        _sum: { totalAmount: true },
+      }),
+    ]);
+
+    const actualMonthly = (transactionSum._sum.total ?? 0) + (orderSum._sum.totalAmount ?? 0);
+
+    // Hitung actual hari ini
+    const today      = new Date();
+    const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endToday   = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59);
+
+    const [txToday, orderToday] = await Promise.all([
+      prisma.transaction.aggregate({
+        where: { outletId, status: 'BERHASIL', createdAt: { gte: startToday, lte: endToday } },
+        _sum: { total: true },
+      }),
+      prisma.order.aggregate({
+        where: { status: 'COMPLETED', table: { outletId }, createdAt: { gte: startToday, lte: endToday } },
+        _sum: { totalAmount: true },
+      }),
+    ]);
+
+    const actualDaily = (txToday._sum.total ?? 0) + (orderToday._sum.totalAmount ?? 0);
+
+    const monthlyTarget = targets.find(t => t.type === 'MONTHLY');
+    const dailyTarget   = targets.find(t => t.type === 'DAILY' && t.day === today.getDate());
+
+    return NextResponse.json({
+      monthly: { target: monthlyTarget?.amount ?? 0, actual: actualMonthly },
+      daily:   { target: dailyTarget?.amount ?? 0,   actual: actualDaily },
+    });
+  } catch (error) {
+    console.error('[GET /api/sales-target]', error);
+    return NextResponse.json({ error: 'Gagal mengambil target' }, { status: 500 });
+  }
+}
+
+// POST /api/sales-target â€” set target
+export async function POST(req: NextRequest) {
+  try {
+    const body   = await req.json();
+    const { outletId, type, amount, year, month, day } = body;
+
+    const target = await prisma.salesTarget.upsert({
+      where: { outletId_type_year_month_day: { outletId, type, year, month, day: day ?? null } },
+      update: { amount },
+      create: { outletId, type, amount, year, month, day: day ?? null },
+    });
+
+    return NextResponse.json({ target });
+  } catch (error) {
+    console.error('[POST /api/sales-target]', error);
+    return NextResponse.json({ error: 'Gagal menyimpan target' }, { status: 500 });
+  }
+}
+
+// ========== app/api/shift/route.ts ==========
+// app/api/shift/route.ts
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+// GET /api/shift?outletId=xxx â€” ambil shift aktif
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const outletId = searchParams.get('outletId');
+    const history  = searchParams.get('history') === 'true';
+
+    if (!outletId) return NextResponse.json({ error: 'outletId required' }, { status: 400 });
+
+    if (history) {
+      const shifts = await prisma.shift.findMany({
+        where: { outletId },
+        orderBy: { openedAt: 'desc' },
+        take: 20,
+      });
+      return NextResponse.json({ shifts });
+    }
+
+    const activeShift = await prisma.shift.findFirst({
+      where: { outletId, status: 'OPEN' },
+      orderBy: { openedAt: 'desc' },
+    });
+
+    return NextResponse.json({ shift: activeShift });
+  } catch (error) {
+    console.error('[GET /api/shift]', error);
+    return NextResponse.json({ error: 'Gagal mengambil shift' }, { status: 500 });
+  }
+}
+
+// POST /api/shift â€” buka shift baru
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { outletId, kasirId, kasirNama, openingBalance } = body;
+
+    // Cek apakah sudah ada shift aktif
+    const existing = await prisma.shift.findFirst({
+      where: { outletId, status: 'OPEN' },
+    });
+    if (existing) {
+      return NextResponse.json({ error: 'Masih ada shift aktif yang belum ditutup' }, { status: 400 });
+    }
+
+    const shift = await prisma.shift.create({
+      data: { outletId, kasirId, kasirNama, openingBalance: openingBalance ?? 0 },
+    });
+
+    return NextResponse.json({ shift });
+  } catch (error) {
+    console.error('[POST /api/shift]', error);
+    return NextResponse.json({ error: 'Gagal membuka shift' }, { status: 500 });
+  }
+}
+
+// PATCH /api/shift â€” tutup shift
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { shiftId, closingBalance, notes } = body;
+
+    const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
+    if (!shift) return NextResponse.json({ error: 'Shift tidak ditemukan' }, { status: 404 });
+    if (shift.status === 'CLOSED') return NextResponse.json({ error: 'Shift sudah ditutup' }, { status: 400 });
+
+    // Hitung total penjualan selama shift ini dari sistem
+    const [txSum, orderSum] = await Promise.all([
+      prisma.transaction.aggregate({
+        where: {
+          outletId: shift.outletId,
+          status: 'BERHASIL',
+          createdAt: { gte: shift.openedAt },
+        },
+        _sum: { total: true },
+      }),
+      prisma.order.aggregate({
+        where: {
+          status: 'COMPLETED',
+          table: { outletId: shift.outletId },
+          createdAt: { gte: shift.openedAt },
+        },
+        _sum: { totalAmount: true },
+      }),
+    ]);
+
+    const salesTotal  = (txSum._sum.total ?? 0) + (orderSum._sum.totalAmount ?? 0);
+    const systemBalance = shift.openingBalance + salesTotal;
+    const difference    = closingBalance - systemBalance;
+
+    const updated = await prisma.shift.update({
+      where: { id: shiftId },
+      data: {
+        closedAt: new Date(),
+        closingBalance,
+        systemBalance,
+        difference,
+        notes,
+        status: 'CLOSED',
+      },
+    });
+
+    return NextResponse.json({ shift: updated, salesTotal });
+  } catch (error) {
+    console.error('[PATCH /api/shift]', error);
+    return NextResponse.json({ error: 'Gagal menutup shift' }, { status: 500 });
+  }
+}
+
+// ========== app/api/suppliers/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET() {
+  try {
+    const suppliers = await prisma.supplier.findMany({
+      include: { _count: { select: { pembelian: true } } },
+      orderBy: { nama: 'asc' },
+    });
+    return NextResponse.json({ suppliers });
+  } catch {
+    return NextResponse.json({ message: 'Gagal memuat suppliers' }, { status: 500 });
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const { nama, telepon, alamat } = await request.json();
+    if (!nama) return NextResponse.json({ message: 'Nama supplier harus diisi' }, { status: 400 });
+
+    // Ambil outletId dari outlet pertama (sesuaikan jika pakai auth session)
+    const outlet = await prisma.outlet.findFirst();
+    if (!outlet) return NextResponse.json({ message: 'Outlet tidak ditemukan' }, { status: 400 });
+
+    const supplier = await prisma.supplier.create({
+      data: { nama, telepon: telepon || null, alamat: alamat || null, outletId: outlet.id },
+    });
+    return NextResponse.json({ supplier });
+  } catch {
+    return NextResponse.json({ message: 'Gagal membuat supplier' }, { status: 500 });
+  }
+}
+
+// ========== app/api/tables/route.ts ==========
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+// GET semua meja
+export async function GET() {
+  try {
+    const tables = await prisma.table.findMany({
+      where: { isActive: true },
+      orderBy: { number: 'asc' },
+    });
+    return NextResponse.json(tables);
+  } catch {
+    return NextResponse.json({ message: 'Gagal memuat meja' }, { status: 500 });
+  }
+}
+
+// POST tambah meja baru
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const number = Number(body.number);
+    const label = body.label;
+
+    if (!Number.isFinite(number)) {
+      return NextResponse.json({ message: 'Nomor meja tidak valid' }, { status: 400 });
+    }
+
+    // use upsert to create or update table atomically and avoid unique constraint errors
+    const table = await prisma.table.upsert({
+      where: { number },
+      update: { label, isActive: true },
+      create: { number, label, isActive: true, outletId: body.outletId },
+    });
+    return NextResponse.json(table);
+  } catch (error: any) {
+    // log the error to server console for debugging
+    // eslint-disable-next-line no-console
+    console.error('POST /api/tables error', error);
+
+    // handle unique constraint (nomor meja unik)
+    if (error?.code === 'P2002') {
+      return NextResponse.json({ message: 'Nomor meja sudah terdaftar' }, { status: 409 });
+    }
+
+    return NextResponse.json({ message: 'Gagal menambah meja' }, { status: 500 });
+  }
+}
+
+
+// ========== app/api/tenant/route.ts ==========
+// app/api/admin/tenants/route.ts
+// Kelola semua tenant â€” hanya SUPERADMIN
+
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/prisma';
+
+// GET â€” daftar semua tenant
+export async function GET(req: NextRequest) {
+  const role = req.headers.get('x-user-role');
+  if (role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  try {
+    const tenants = await prisma.tenant.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: {
+        _count: { select: { outlets: true, users: true, transactions: true } },
+      },
+    });
+
+    return NextResponse.json({ tenants });
+  } catch (error) {
+    console.error('[GET /api/admin/tenants]', error);
+    return NextResponse.json({ error: 'Gagal mengambil data' }, { status: 500 });
+  }
+}
+
+// PATCH â€” update tenant (plan, status, limit)
+export async function PATCH(req: NextRequest) {
+  const role = req.headers.get('x-user-role');
+  if (role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  try {
+    const { tenantId, plan, isActive, maxOutlets, maxUsers } = await req.json();
+
+    const planLimits: Record<string, { maxOutlets: number; maxUsers: number }> = {
+      FREE:  { maxOutlets: 1,  maxUsers: 3   },
+      BASIC: { maxOutlets: 3,  maxUsers: 10  },
+      PRO:   { maxOutlets: 99, maxUsers: 999 },
+    };
+
+    const updateData: Record<string, unknown> = {};
+    if (plan) {
+      updateData.plan       = plan;
+      updateData.maxOutlets = planLimits[plan]?.maxOutlets ?? maxOutlets;
+      updateData.maxUsers   = planLimits[plan]?.maxUsers   ?? maxUsers;
+    }
+    if (typeof isActive === 'boolean') updateData.isActive = isActive;
+    if (maxOutlets) updateData.maxOutlets = maxOutlets;
+    if (maxUsers)   updateData.maxUsers   = maxUsers;
+
+    const tenant = await prisma.tenant.update({
+      where: { id: tenantId },
+      data: updateData,
+    });
+
+    return NextResponse.json({ tenant });
+  } catch (error) {
+    console.error('[PATCH /api/admin/tenants]', error);
+    return NextResponse.json({ error: 'Gagal update tenant' }, { status: 500 });
+  }
+}
+
+// DELETE â€” hapus tenant dan semua datanya
+export async function DELETE(req: NextRequest) {
+  const role = req.headers.get('x-user-role');
+  if (role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
+  try {
+    const { tenantId } = await req.json();
+
+    // Hapus semua data tenant dalam urutan yang benar (foreign key)
+    await prisma.$transaction([
+      prisma.transactionItem.deleteMany({ where: { transaction: { tenantId } } }),
+      prisma.transaction.deleteMany({ where: { tenantId } }),
+      prisma.order.deleteMany({ where: { table: { outlet: { tenantId } } } }),
+      prisma.shift.deleteMany({ where: { tenantId } }),
+      prisma.salesTarget.deleteMany({ where: { tenantId } }),
+      prisma.menuPermission.deleteMany({ where: { tenant: { id: tenantId } } }),
+      prisma.product.deleteMany({ where: { tenantId } }),
+      prisma.outlet.deleteMany({ where: { tenantId } }),
+      prisma.user.deleteMany({ where: { tenantId } }),
+      prisma.tenant.delete({ where: { id: tenantId } }),
+    ]);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('[DELETE /api/admin/tenants]', error);
+    return NextResponse.json({ error: 'Gagal hapus tenant' }, { status: 500 });
+  }
+}
+
+// ========== app/api/transactions/route.ts ==========
+import { NextRequest, NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+import { PaymentMethod, TransactionStatus } from '@prisma/client';
+
+export async function POST(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const {
+      nomorTransaksi,
+      total,
+      diskon,
+      pajak,
+      totalBayar,
+      uangDibayar,
+      kembalian,
+      metodePembayaran,
+      items,
+      outletId,
+      kasir, // Tambahkan kasir dari frontend
+    } = body;
+
+    // Validasi: Pastikan outletId ada
+    let finalOutletId = outletId;
+
+    if (!finalOutletId) {
+      const defaultOutlet = await prisma.outlet.findFirst();
+      if (!defaultOutlet) {
+        return NextResponse.json(
+          { error: 'No outlet found. Please create an outlet first.' },
+          { status: 400 }
+        );
+      }
+      finalOutletId = defaultOutlet.id;
+    }
+
+    // Validasi: Cek apakah outlet exists
+    const outlet = await prisma.outlet.findUnique({
+      where: { id: finalOutletId },
+    });
+
+    if (!outlet) {
+      return NextResponse.json(
+        { error: `Outlet with id '${finalOutletId}' not found` },
+        { status: 404 }
+      );
+    }
+
+    // Validasi: Cek apakah semua productId valid
+    const productIds = items.map((item: any) => item.productId);
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, stok: true, nama: true },
+    });
+
+    if (products.length !== productIds.length) {
+      const foundIds = products.map(p => p.id);
+      const missingIds = productIds.filter((id: string) => !foundIds.includes(id));
+      return NextResponse.json(
+        { error: `Products not found: ${missingIds.join(', ')}` },
+        { status: 404 }
+      );
+    }
+
+    // Validasi: Cek stok cukup
+    for (const item of items) {
+      const product = products.find(p => p.id === item.productId);
+      if (product && product.stok < item.quantity) {
+        return NextResponse.json(
+          { error: `Stok tidak cukup untuk produk "${product.nama}". Tersedia: ${product.stok}, Diminta: ${item.quantity}` },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Konversi metodePembayaran ke enum PaymentMethod
+    let paymentMethodEnum: PaymentMethod;
+    switch (metodePembayaran) {
+      case 'cash':
+        paymentMethodEnum = PaymentMethod.TUNAI;
+        break;
+      case 'card':
+        paymentMethodEnum = PaymentMethod.DEBIT; // atau KREDIT
+        break;
+      case 'ewallet':
+        paymentMethodEnum = PaymentMethod.QRIS;
+        break;
+      default:
+        paymentMethodEnum = PaymentMethod.TUNAI;
+    }
+
+    // Gunakan Prisma transaction untuk atomicity
+    const transaction = await prisma.$transaction(async (tx) => {
+      // Create transaction record
+      const newTransaction = await tx.transaction.create({
+        data: {
+          nomorTransaksi,
+          total,
+          diskon: diskon || 0,
+          pajak: pajak || 0,
+          totalBayar,
+          uangDibayar,
+          kembalian,
+          metodePembayaran: paymentMethodEnum,
+          status: TransactionStatus.BERHASIL,
+          kasir: kasir || 'Kasir',
+          outletId: finalOutletId,
+          items: {
+            create: items.map((item: any) => ({
+              productId: item.productId,
+              namaProduk: item.nama,
+              quantity: item.quantity,
+              hargaSatuan: item.hargaSatuan,
+              subtotal: item.subtotal,
+            })),
+          },
+        },
+        include: {
+          items: {
+            include: {
+              product: true
+            }
+          },
+        },
+      });
+
+      // Update stok products
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: {
+            stok: {
+              decrement: item.quantity,
+            },
+          },
+        });
+      }
+
+      return newTransaction;
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      transaction 
+    }, { status: 201 });
+  } catch (error) {
+    console.error('Transaction error:', error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json(
+      { error: 'Failed to create transaction', details: errorMessage },
+      { status: 500 }
+    );
+  }
+}
+
+// GET /api/transactions - untuk mengambil daftar transaksi
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const outletId = searchParams.get('outletId');
+    const startDate = searchParams.get('startDate');
+    const endDate = searchParams.get('endDate');
+    const limit = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 100;
+
+    const whereClause: any = {};
+    
+    if (outletId) {
+      whereClause.outletId = outletId;
+    }
+    
+    if (startDate && endDate) {
+      whereClause.createdAt = {
+        gte: new Date(startDate),
+        lte: new Date(endDate)
+      };
+    }
+
+    const transactions = await prisma.transaction.findMany({
+      where: whereClause,
+      include: {
+        items: {
+          include: {
+            product: true
+          }
+        },
+        outlet: true
+      },
+      orderBy: {
+        createdAt: 'desc'
+      },
+      take: limit
+    });
+
+    return NextResponse.json({ 
+      success: true,
+      transactions 
+    });
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    return NextResponse.json(
+      { error: 'Failed to fetch transactions' },
+      { status: 500 }
+    );
+  }
+}
+
+// ========== app/api/users/route.ts ==========
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+
+export async function GET() {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        nama: true,
+        email: true,
+        role: true,
+        outletId: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    return NextResponse.json({ users });
+  } catch {
+    return NextResponse.json({ message: 'Gagal memuat users' }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const { nama, email, password, role, outletId } = await req.json();
+
+    if (!nama || !email || !password) {
+      return NextResponse.json({ message: 'Nama, email, dan password harus diisi' }, { status: 400 });
+    }
+
+    // Cek email duplikat
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      return NextResponse.json({ message: 'Email sudah digunakan' }, { status: 400 });
+    }
+
+    // Ambil outletId dari outlet pertama jika tidak disediakan
+    let finalOutletId = outletId;
+    if (!finalOutletId) {
+      const outlet = await prisma.outlet.findFirst();
+      finalOutletId = outlet?.id;
+    }
+
+    const user = await prisma.user.create({
+      data: {
+        nama,
+        email,
+        password, // pertimbangkan bcrypt untuk production
+        role: role ?? 'KASIR',
+        outletId: finalOutletId,
+      },
+      select: { id: true, nama: true, email: true, role: true, outletId: true, createdAt: true },
+    });
+
+    return NextResponse.json({ user });
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return NextResponse.json({ message: 'Email sudah digunakan' }, { status: 400 });
+    }
+    return NextResponse.json({ message: 'Gagal membuat user' }, { status: 500 });
+  }
+}
+

@@ -69,6 +69,8 @@ export default function OutletsPage() {
       if (!res.ok) throw new Error('Gagal menyimpan outlet');
       setIsModalOpen(false);
       loadOutlets();
+      // Broadcast event untuk refresh outlet list di Navbar/Sidebar
+      window.dispatchEvent(new Event('outlets-updated'));
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -82,6 +84,8 @@ export default function OutletsPage() {
       const res = await fetch(`/api/outlets/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Gagal menghapus outlet');
       loadOutlets();
+      // Broadcast event untuk refresh outlet list di Navbar/Sidebar
+      window.dispatchEvent(new Event('outlets-updated'));
     } catch (err: any) {
       alert(err.message);
     }
