@@ -8,7 +8,7 @@ interface UseBarcodeFocusOptions {
 export function useBarcodeFocus(options: UseBarcodeFocusOptions = {}) {
   const { autoFocusDelay = 2000 } = options;
   const inputRef = useRef<HTMLInputElement>(null);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
 
   const focusInput = useCallback(() => {
     if (inputRef.current && document.activeElement !== inputRef.current) {

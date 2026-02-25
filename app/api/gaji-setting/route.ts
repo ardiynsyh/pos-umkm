@@ -34,12 +34,12 @@ export async function GET(req: NextRequest) {
       userName:           u.nama,
       userRole:           u.role.toLowerCase(),
       outletId:           u.outletId,
-      skema:              u.gajiSetting?.skema              ?? 'bulanan',
-      gajiPokok:          u.gajiSetting?.gajiPokok          ?? 0,
-      gajiHarian:         u.gajiSetting?.gajiHarian         ?? 0,
-      tunjangan:          u.gajiSetting?.tunjangan          ?? 0,
-      tarifLembur:        u.gajiSetting?.tarifLembur        ?? 0,
-      potonganTerlambat:  u.gajiSetting?.potonganTerlambat  ?? 0,
+      skema:              u.gajiSetting?.[0]?.skema              ?? 'bulanan',
+      gajiPokok:          u.gajiSetting?.[0]?.gajiPokok          ?? 0,
+      gajiHarian:         u.gajiSetting?.[0]?.gajiHarian         ?? 0,
+      tunjangan:          u.gajiSetting?.[0]?.tunjangan          ?? 0,
+      tarifLembur:        u.gajiSetting?.[0]?.tarifLembur        ?? 0,
+      potonganTerlambat:  u.gajiSetting?.[0]?.potonganTerlambat  ?? 0,
     }))
 
     return apiSuccess(result)

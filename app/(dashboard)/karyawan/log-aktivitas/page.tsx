@@ -53,7 +53,7 @@ export default function LogAktivitasPage() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate]     = useState('')
 
-  const searchTimeout = useRef<NodeJS.Timeout>()
+  const searchTimeout = useRef<NodeJS.Timeout | undefined>(undefined)
 
   const fetchLogs = useCallback(async (pageNum = 1) => {
     setLoading(true)
