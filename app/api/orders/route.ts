@@ -3,9 +3,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
 
+// ── GET /api/orders ────────────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
   const tenantId = req.headers.get('x-tenant-id');
   const role = req.headers.get('x-user-role');
+  
   if (!tenantId && role !== 'SUPERADMIN') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -17,8 +19,8 @@ export async function GET(req: NextRequest) {
     const orders = await prisma.order.findMany({
       where: {
         createdAt: { gte: startOfDay },
-        // Filter via outlet yang terhubung ke tenant
-        ...(tenantId && { table: { outlet: { tenantId } } }),
+        // Pastikan model Order Anda memiliki field tenantId
+        ...(tenantId && { tenantId: tenantId }),
       },
       include: {
         table: { include: { outlet: true } },
@@ -34,6 +36,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// ── POST /api/orders ───────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   const tenantId = req.headers.get('x-tenant-id');
   if (!tenantId) {
@@ -41,26 +44,35 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const { tableId, customerName, items, totalAmount } = await req.json();
+    const body = await req.json();
+    const { tableId, customerName, items, totalAmount } = body;
+
     if (!tableId || !items?.length) {
       return NextResponse.json({ error: 'Data tidak lengkap' }, { status: 400 });
     }
 
-    const orderCount = await prisma.order.count();
-    const orderNumber = `ORD-${String(orderCount + 1).padStart(3, '0')}`;
+    // Gunakan transaksi atau count untuk generate order number
+    const orderCount = await prisma.order.count({ where: { tenantId } });
+    const orderNumber = `ORD-${Date.now()}-${String(orderCount + 1).padStart(3, '0')}`;
 
     const order = await prisma.order.create({
       data: {
-        orderNumber, tableId,
+        orderNumber,
         customerName: customerName || null,
         status: OrderStatus.PENDING,
         paymentStatus: PaymentStatus.UNPAID,
-        totalAmount,
+        totalAmount: Number(totalAmount), // Pastikan bertipe Number
+        // Gunakan field relasi eksplisit untuk menghindari error 'never'
+        tenantId: tenantId, 
+        tableId: tableId, 
         items: {
           create: items.map((item: any) => ({
-            productId: item.productId, productName: item.productName,
-            price: item.price, quantity: item.quantity,
-            subtotal: item.price * item.quantity,
+            productId: item.productId,
+            productName: item.productName,
+            price: Number(item.price),
+            quantity: Number(item.quantity),
+            subtotal: Number(item.price) * Number(item.quantity),
+            tenantId: tenantId, // Sertakan tenantId di tiap item jika ada di skema
           })),
         },
       },
@@ -70,10 +82,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, order }, { status: 201 });
   } catch (error: any) {
     console.error('Error creating order:', error);
-    return NextResponse.json({ error: 'Gagal membuat pesanan: ' + error.message }, { status: 500 });
+    return NextResponse.json({ 
+        error: 'Gagal membuat pesanan', 
+        detail: error.message 
+    }, { status: 500 });
   }
 }
 
+// ── PUT /api/orders ────────────────────────────────────────────────────────
 export async function PUT(req: NextRequest) {
   const tenantId = req.headers.get('x-tenant-id');
   if (!tenantId) {
@@ -82,20 +98,31 @@ export async function PUT(req: NextRequest) {
 
   try {
     const { orderId, status, paymentStatus, paymentMethod } = await req.json();
-    const updateData: any = {};
-    if (status) updateData.status = status;
-    if (paymentStatus) updateData.paymentStatus = paymentStatus;
-    if (paymentMethod) updateData.paymentMethod = paymentMethod;
 
+    if (!orderId) {
+      return NextResponse.json({ error: 'Order ID wajib diisi' }, { status: 400 });
+    }
+
+    // Memastikan order yang diupdate milik tenant yang benar
     const order = await prisma.order.update({
-      where: { id: orderId },
-      data: updateData,
+      where: { 
+        id: orderId,
+        tenantId: tenantId // Security check
+      },
+      data: {
+        ...(status && { status }),
+        ...(paymentStatus && { paymentStatus }),
+        ...(paymentMethod && { paymentMethod }),
+      },
       include: { table: true, items: true },
     });
 
     return NextResponse.json({ success: true, order });
   } catch (error: any) {
     console.error('Error updating order:', error);
-    return NextResponse.json({ error: 'Gagal update pesanan: ' + error.message }, { status: 500 });
+    return NextResponse.json({ 
+        error: 'Gagal update pesanan', 
+        detail: error.message 
+    }, { status: 500 });
   }
 }
