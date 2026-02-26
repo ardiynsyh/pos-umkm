@@ -1,8 +1,11 @@
+// PATH: app/karyawan/absensi/page.tsx
+
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
 import { Absensi, AbsensiStatus, ShiftType } from '@/types/karyawan'
 import { useUsers } from '@/hooks/useUsers'
+import { useAuthStore } from '@/lib/store/authStore' // ✅ baca role dari store, bukan /api/auth/me
 
 // ── Helper ────────────────────────────────────────────────────
 const statusConfig: Record<AbsensiStatus, { label: string; color: string; bg: string }> = {
@@ -26,6 +29,9 @@ const roleColors: Record<string, { color: string; bg: string }> = {
   kasir:      { color: '#0d9488', bg: '#ccfbf1' },
 }
 
+// ✅ Role yang boleh menambah absensi
+const ROLES_CAN_ADD_ABSENSI = ['SUPERADMIN', 'ADMIN', 'MANAGER']
+
 function formatDate(dateStr: string) {
   return new Date(dateStr).toLocaleDateString('id-ID', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
@@ -34,16 +40,23 @@ function formatDate(dateStr: string) {
 
 // ── Component ─────────────────────────────────────────────────
 export default function AbsensiPage() {
-  const [absensiList, setAbsensiList] = useState<Absensi[]>([])
-  const [summary, setSummary] = useState({ hadir: 0, terlambat: 0, izin: 0, absen: 0 })
-  const [loading, setLoading] = useState(true)
+  const [absensiList, setAbsensiList]   = useState<Absensi[]>([])
+  const [summary, setSummary]           = useState({ hadir: 0, terlambat: 0, izin: 0, absen: 0 })
+  const [loading, setLoading]           = useState(true)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
   const [filterStatus, setFilterStatus] = useState<AbsensiStatus | ''>('')
-  const [showModal, setShowModal] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
-  const [errorMsg, setErrorMsg] = useState('')
+  const [showModal, setShowModal]       = useState(false)
+  const [submitting, setSubmitting]     = useState(false)
+  const [errorMsg, setErrorMsg]         = useState('')
 
-  // ── Gunakan hook terpusat — otomatis sinkron dengan perubahan di Users ──
+  // ✅ Ambil role dari authStore — tunggu hydration selesai dulu
+  // _hasHydrated = true setelah zustand persist selesai load dari localStorage
+  const user            = useAuthStore(state => state.user)
+  const hasHydrated     = useAuthStore(state => state._hasHydrated)
+  const currentUserRole = hasHydrated ? (user?.role?.toUpperCase() ?? '') : ''
+  const canAddAbsensi   = ROLES_CAN_ADD_ABSENSI.includes(currentUserRole)
+
+  // ── Gunakan hook terpusat ─────────────────────────────────────────────────
   const { users: userOptions, loading: loadingUsers, error: usersError, refetch: refetchUsers } = useUsers()
 
   const [form, setForm] = useState({
@@ -87,7 +100,6 @@ export default function AbsensiPage() {
       keterangan: '',
     })
     setErrorMsg('')
-    // Refetch user terbaru saat modal dibuka agar selalu sinkron
     refetchUsers()
     setShowModal(true)
   }
@@ -103,7 +115,6 @@ export default function AbsensiPage() {
 
     setSubmitting(true)
     try {
-      // Ambil outletId dari user yang dipilih
       const selectedUser = userOptions.find(u => u.id === form.userId)
       const outletId     = selectedUser?.outletId ?? 'o1'
 
@@ -151,9 +162,12 @@ export default function AbsensiPage() {
             onChange={e => setSelectedDate(e.target.value)}
             className="input-date"
           />
-          <button className="btn-primary" onClick={openModal}>
-            + Tambah Absensi
-          </button>
+          {/* ✅ Tombol hanya muncul untuk ADMIN, MANAGER, SUPERADMIN */}
+          {canAddAbsensi && (
+            <button className="btn-primary" onClick={openModal}>
+              + Tambah Absensi
+            </button>
+          )}
         </div>
       </div>
 
@@ -254,7 +268,7 @@ export default function AbsensiPage() {
       </div>
 
       {/* ── Modal Tambah Absensi ──────────────────────────── */}
-      {showModal && (
+      {showModal && canAddAbsensi && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
@@ -263,12 +277,11 @@ export default function AbsensiPage() {
             </div>
             <form onSubmit={handleSubmit} className="modal-body">
 
-              {errorMsg && <div className="error-banner">⚠️ {errorMsg}</div>}
+              {errorMsg   && <div className="error-banner">⚠️ {errorMsg}</div>}
               {usersError && <div className="error-banner">⚠️ {usersError}</div>}
 
               <div className="form-grid">
 
-                {/* ── Dropdown Pilih Karyawan (dari useUsers) ── */}
                 <div className="form-group">
                   <label>Karyawan <span className="required">*</span></label>
                   {loadingUsers ? (

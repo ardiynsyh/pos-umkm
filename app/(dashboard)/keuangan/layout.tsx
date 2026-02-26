@@ -11,7 +11,6 @@ const TABS = [
   { href: '/keuangan/laporan',     label: 'Laporan',     icon: BarChart3 },
   { href: '/keuangan/pengeluaran', label: 'Pengeluaran', icon: Wallet },
   { href: '/keuangan/supplier',    label: 'Supplier',    icon: Truck },
-  { href: '/keuangan/pembelian',   label: 'Pembelian',   icon: Package },
 ];
 
 export default function KeuanganLayout({ children }: { children: ReactNode }) {

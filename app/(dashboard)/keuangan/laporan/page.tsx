@@ -1,407 +1,491 @@
+// PATH: app/keuangan/laporan/page.tsx
+
 'use client';
 
+import { useState, useEffect, useCallback } from 'react';
 import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
-import React, { useState, useEffect, useCallback } from 'react';
-import { Card } from '@/components/ui';
-import { formatCurrency } from '@/lib/utils/format';
 import { useAuthStore } from '@/lib/store/authStore';
 import {
-  DollarSign, ShoppingBag, TrendingUp, Calendar,
-  Download, Filter, ChevronDown, ChevronUp,
-  Store, Smartphone, Lock,
+  TrendingUp, ShoppingCart, DollarSign, Calendar,
+  ChevronDown, Receipt, User, Table, ArrowUpRight,
+  ArrowDownRight, BarChart2, Wallet, Package,
 } from 'lucide-react';
+import { format } from 'date-fns';
+import { id } from 'date-fns/locale';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface TransactionItem {
   productName: string;
-  quantity: number;
-  price: number;
-  subtotal: number;
+  quantity:    number;
+  price:       number;
+  subtotal:    number;
 }
 
 interface Transaction {
-  id: string;
+  id:                string;
   transactionNumber: string;
-  source: 'kasir' | 'customer';
-  total: number;
-  paymentMethod: string;
-  cashierName: string;
-  customerName: string;
-  tableInfo: string;
-  paymentAmount: number;
-  change: number;
-  createdAt: string;
-  items: TransactionItem[];
+  source:            'kasir' | 'customer';
+  total:             number;
+  paymentMethod:     string;
+  cashierName:       string;
+  customerName:      string;
+  tableInfo:         string;
+  paymentAmount:     number;
+  change:            number;
+  createdAt:         string;
+  items:             TransactionItem[];
+}
+
+interface KeuanganSummary {
+  totalPendapatan:       number;
+  totalPengeluaran:      number;
+  totalPembelianStok:    number;
+  totalBiayaOperasional: number;
+  labaKotor:             number;
+  labaBersih:            number;
 }
 
 interface Stats {
-  totalRevenue: number;
-  totalTransactions: number;
+  totalRevenue:       number;
+  totalTransactions:  number;
   averageTransaction: number;
-  todayRevenue: number;
+  todayRevenue:       number;
+}
+
+interface PengeluaranItem {
+  id:         string;
+  tanggal:    string;
+  kategori:   string;
+  keterangan: string;
+  jumlah:     number;
+  source:     'manual' | 'pembelian';
+}
+
+interface LaporanData {
+  transactions:          Transaction[];
+  stats:                 Stats;
+  keuangan:              KeuanganSummary;
+  pengeluaranList:       PengeluaranItem[];
+  pengeluaranPerKategori: Record<string, number>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const MONTHS = [
-  'Januari','Februari','Maret','April','Mei','Juni',
-  'Juli','Agustus','September','Oktober','November','Desember',
-];
+const formatRupiah = (v: number) =>
+  new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(v);
 
-const paymentLabel = (method: string) => {
-  const map: Record<string, string> = {
-    cash: 'Tunai', card: 'Kartu', qris: 'QRIS',
-    transfer: 'Transfer', ewallet: 'E-Wallet',
-  };
-  return map[method] || method;
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const PAYMENT_LABELS: Record<string, string> = {
+  cash: 'Tunai', card: 'Kartu', qris: 'QRIS', transfer: 'Transfer', ewallet: 'E-Wallet',
 };
 
-const paymentColor = (method: string) => {
-  const map: Record<string, string> = {
-    cash: 'bg-green-100 text-green-800',
-    card: 'bg-blue-100 text-blue-800',
-    qris: 'bg-purple-100 text-purple-800',
-    transfer: 'bg-indigo-100 text-indigo-800',
-    ewallet: 'bg-orange-100 text-orange-800',
+// ─── Sub-components ───────────────────────────────────────────────────────────
+function StatCard({ icon, label, value, sub, color = 'red' }: {
+  icon: React.ReactNode; label: string; value: string; sub?: string; color?: string;
+}) {
+  const colors: Record<string, string> = {
+    red:    'bg-red-50 text-red-600',
+    green:  'bg-green-50 text-green-600',
+    blue:   'bg-blue-50 text-blue-600',
+    orange: 'bg-orange-50 text-orange-600',
+    purple: 'bg-purple-50 text-purple-600',
+    pink:   'bg-pink-50 text-pink-600',
   };
-  return map[method] || 'bg-gray-100 text-gray-800';
-};
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-4">
+      <div className="flex items-center gap-3 mb-2">
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${colors[color]}`}>
+          {icon}
+        </div>
+        <p className="text-xs text-gray-500 font-medium">{label}</p>
+      </div>
+      <p className="text-lg font-bold text-gray-800">{value}</p>
+      {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+    </div>
+  );
+}
 
-// ─── Page ──────────────────────────────────────────────────────────────────────
+function TransactionRow({ tx, expanded, onToggle }: {
+  tx: Transaction; expanded: boolean; onToggle: () => void;
+}) {
+  return (
+    <>
+      <tr
+        className="hover:bg-gray-50 cursor-pointer transition-colors"
+        onClick={onToggle}
+      >
+        <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">
+          {format(new Date(tx.createdAt), 'd MMM yyyy, HH:mm', { locale: id })}
+        </td>
+        <td className="px-4 py-3">
+          <span className="text-xs font-mono text-gray-600">{tx.transactionNumber}</span>
+        </td>
+        <td className="px-4 py-3 hidden sm:table-cell">
+          <span className={`text-xs px-2 py-0.5 rounded-full ${tx.source === 'kasir' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+            {tx.source === 'kasir' ? '🖥 Kasir' : '📱 Customer'}
+          </span>
+        </td>
+        <td className="px-4 py-3 hidden sm:table-cell text-xs text-gray-600">
+          {tx.cashierName}
+        </td>
+        <td className="px-4 py-3 hidden md:table-cell">
+          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+            {PAYMENT_LABELS[tx.paymentMethod] ?? tx.paymentMethod}
+          </span>
+        </td>
+        <td className="px-4 py-3 text-right font-semibold text-gray-800">
+          {formatRupiah(tx.total)}
+        </td>
+        <td className="px-4 py-3 text-center">
+          <ChevronDown className={`w-4 h-4 text-gray-400 mx-auto transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="bg-blue-50">
+          <td colSpan={7} className="px-6 py-3">
+            <div className="text-xs text-gray-700 space-y-1">
+              {tx.tableInfo && <p className="text-gray-500 flex items-center gap-1"><Table className="w-3 h-3" /> Meja: {tx.tableInfo}</p>}
+              {tx.customerName && <p className="text-gray-500 flex items-center gap-1"><User className="w-3 h-3" /> Pelanggan: {tx.customerName}</p>}
+              <div className="mt-2 border rounded-lg overflow-hidden bg-white">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="text-left px-3 py-1.5 text-gray-600">Produk</th>
+                      <th className="text-center px-3 py-1.5 text-gray-600">Qty</th>
+                      <th className="text-right px-3 py-1.5 text-gray-600">Harga</th>
+                      <th className="text-right px-3 py-1.5 text-gray-600">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tx.items.map((item, i) => (
+                      <tr key={i} className="border-t">
+                        <td className="px-3 py-1.5">{item.productName}</td>
+                        <td className="px-3 py-1.5 text-center">{item.quantity}</td>
+                        <td className="px-3 py-1.5 text-right">{formatRupiah(item.price)}</td>
+                        <td className="px-3 py-1.5 text-right font-medium">{formatRupiah(item.subtotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t">
+                    <tr>
+                      <td colSpan={3} className="px-3 py-1.5 text-right font-semibold">Total</td>
+                      <td className="px-3 py-1.5 text-right font-bold text-red-600">{formatRupiah(tx.total)}</td>
+                    </tr>
+                    <tr>
+                      <td colSpan={3} className="px-3 py-1 text-right text-gray-500">Bayar</td>
+                      <td className="px-3 py-1 text-right text-gray-600">{formatRupiah(tx.paymentAmount)}</td>
+                    </tr>
+                    <tr>
+                      <td colSpan={3} className="px-3 py-1 text-right text-gray-500">Kembalian</td>
+                      <td className="px-3 py-1 text-right text-gray-600">{formatRupiah(tx.change)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export default function LaporanPage() {
-  const { user } = useAuthStore();
+  const user = useAuthStore(state => state.user);
 
-  // ✅ KASIR hanya bisa lihat & export — tidak bisa edit/hapus apapun
-  const isKasir   = user?.role === 'KASIR';
-  const isReadOnly = isKasir;
+  const [data,       setData]       = useState<LaporanData | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [filter,     setFilter]     = useState<'today' | 'week' | 'month' | 'custom'>('today');
+  const [customMonth, setCustomMonth] = useState(todayISO().slice(0, 7));
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [activeTab,  setActiveTab]  = useState<'transaksi' | 'keuangan' | 'pengeluaran'>('transaksi');
 
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [stats, setStats] = useState<Stats>({
-    totalRevenue: 0, totalTransactions: 0,
-    averageTransaction: 0, todayRevenue: 0,
-  });
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [loading,      setLoading]      = useState(true);
-  const [exporting,    setExporting]    = useState(false);
-  const [filter, setFilter] = useState<'today' | 'week' | 'month' | 'all' | 'custom'>('today');
-
-  const now = new Date();
-  const [customDay,   setCustomDay]   = useState('');
-  const [customMonth, setCustomMonth] = useState(String(now.getMonth() + 1));
-  const [customYear,  setCustomYear]  = useState(String(now.getFullYear()));
-
-  const yearOptions  = Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i);
-  const daysInMonth  = customMonth && customYear
-    ? new Date(parseInt(customYear), parseInt(customMonth), 0).getDate() : 31;
-  const dayOptions   = Array.from({ length: daysInMonth }, (_, i) => i + 1);
-
-  // ─── Fetch data ─────────────────────────────────────────────────────────────
-  const loadTransactions = useCallback(async () => {
-    setLoading(true);
+  const fetchData = useCallback(async () => {
     try {
-      const params = new URLSearchParams({ filter });
+      setLoading(true);
+      let url = `/api/laporan?filter=${filter}`;
       if (filter === 'custom') {
-        if (customDay)   params.set('day',   customDay);
-        if (customMonth) params.set('month', customMonth);
-        if (customYear)  params.set('year',  customYear);
+        const [yr, mo] = customMonth.split('-');
+        url += `&month=${mo}&year=${yr}`;
       }
-      const res  = await fetch(`/api/laporan?${params.toString()}`);
-      if (!res.ok) throw new Error('Gagal fetch');
-      const data = await res.json();
-      setTransactions(data.transactions);
-      setStats(data.stats);
+      const res  = await fetch(url);
+      const json = await res.json();
+      setData(json);
     } catch (err) {
-      console.error('Gagal memuat laporan:', err);
+      console.error('Gagal fetch laporan', err);
     } finally {
       setLoading(false);
     }
-  }, [filter, customDay, customMonth, customYear]);
+  }, [filter, customMonth]);
 
-  useEffect(() => { loadTransactions(); }, [loadTransactions]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
-  const toggleRow = (id: string) => {
-    setExpandedRows(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  const filterLabel = {
+    today:  'Hari Ini',
+    week:   '7 Hari Terakhir',
+    month:  '30 Hari Terakhir',
+    custom: 'Bulan Tertentu',
   };
-
-  // ─── Export Excel ────────────────────────────────────────────────────────────
-  // ✅ KASIR boleh export
-  const exportToExcel = async () => {
-    setExporting(true);
-    try {
-      const params = new URLSearchParams({ filter });
-      if (filter === 'custom') {
-        if (customDay)   params.set('day',   customDay);
-        if (customMonth) params.set('month', customMonth);
-        if (customYear)  params.set('year',  customYear);
-      }
-      const res = await fetch(`/api/laporan/export?${params.toString()}`);
-      if (!res.ok) throw new Error('Gagal export');
-
-      const blob     = await res.blob();
-      const url      = URL.createObjectURL(blob);
-      const a        = document.createElement('a');
-      a.href         = url;
-      a.download     = `laporan-${new Date().toISOString().slice(0, 10)}.xlsx`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error('Export gagal:', err);
-      alert('Gagal export. Pastikan library exceljs sudah terinstall.');
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  const customLabel = filter === 'custom'
-    ? [customDay || null, customMonth ? MONTHS[parseInt(customMonth) - 1] : null, customYear]
-        .filter(Boolean).join(' ')
-    : '';
 
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-gray-100">
-        <div className="max-w-7xl mx-auto px-4 py-6">
+        <div className="max-w-5xl mx-auto px-4 py-8">
 
-          {/* ── Header ────────────────────────────────────────────────────── */}
+          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-gray-800">Laporan Penjualan</h1>
-              {/* ✅ Tampilkan badge read-only untuk KASIR */}
-              {isReadOnly && (
-                <div className="flex items-center gap-1.5 mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full w-fit">
-                  <Lock className="w-3 h-3" />
-                  <span>Mode Lihat — Hanya bisa export, tidak bisa mengedit data</span>
-                </div>
-              )}
+              <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <BarChart2 className="w-6 h-6 text-red-500" /> Laporan Keuangan
+              </h1>
+              <p className="text-sm text-gray-500 mt-1">Ringkasan transaksi & keuangan toko</p>
             </div>
-            {/* ✅ Tombol export tersedia untuk semua role termasuk KASIR */}
-            <button
-              onClick={exportToExcel}
-              disabled={exporting}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-60 transition-colors text-sm font-medium"
-            >
-              {exporting ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Download className="w-4 h-4" />
-              )}
-              {exporting ? 'Mengexport...' : 'Export Excel'}
+          </div>
+
+          {/* Filter */}
+          <div className="bg-white rounded-xl shadow-sm p-4 mb-5 flex flex-wrap items-center gap-3">
+            <span className="text-sm font-medium text-gray-600 flex items-center gap-1">
+              <Calendar className="w-4 h-4" /> Periode:
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {(['today', 'week', 'month', 'custom'] as const).map(f => (
+                <button key={f} onClick={() => setFilter(f)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filter === f ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                  {filterLabel[f]}
+                </button>
+              ))}
+            </div>
+            {filter === 'custom' && (
+              <input type="month" value={customMonth} onChange={e => setCustomMonth(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-red-400" />
+            )}
+            <button onClick={fetchData} className="ml-auto bg-red-50 hover:bg-red-100 text-red-600 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors">
+              Refresh
             </button>
           </div>
 
-          {/* ── Filter Tabs ───────────────────────────────────────────────── */}
-          <div className="flex flex-wrap gap-2 mb-4">
-            {[
-              { key: 'today',  label: 'Hari Ini' },
-              { key: 'week',   label: '7 Hari' },
-              { key: 'month',  label: '30 Hari' },
-              { key: 'all',    label: 'Semua' },
-              { key: 'custom', label: <span className="flex items-center gap-1"><Filter className="w-3 h-3" /> Pilih Tanggal</span> },
-            ].map(item => (
-              <button key={item.key}
-                onClick={() => setFilter(item.key as typeof filter)}
-                className={`px-4 py-2 rounded-lg transition-colors text-sm ${
-                  filter === item.key ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-
-          {/* ── Custom Date Picker ────────────────────────────────────────── */}
-          {filter === 'custom' && (
-            <div className="bg-white rounded-xl shadow-sm p-4 mb-6 border border-blue-100">
-              <p className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-blue-500" />
-                Filter Berdasarkan Tanggal
-              </p>
-              <div className="flex flex-wrap gap-3 items-end">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-gray-500 font-medium">Tanggal <span className="text-gray-400">(opsional)</span></label>
-                  <select value={customDay} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setCustomDay(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[90px]">
-                    <option value="">Semua</option>
-                    {dayOptions.map(d => <option key={d} value={String(d)}>{d}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-gray-500 font-medium">Bulan</label>
-                  <select value={customMonth} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setCustomMonth(e.target.value); setCustomDay(''); }}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[130px]">
-                    {MONTHS.map((m, i) => <option key={i} value={String(i + 1)}>{m}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs text-gray-500 font-medium">Tahun</label>
-                  <select value={customYear} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => { setCustomYear(e.target.value); setCustomDay(''); }}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[100px]">
-                    {yearOptions.map(y => <option key={y} value={String(y)}>{y}</option>)}
-                  </select>
-                </div>
-                {customDay && (
-                  <button onClick={() => setCustomDay('')}
-                    className="px-3 py-2 text-sm text-gray-500 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                    Reset Tanggal
-                  </button>
-                )}
-              </div>
-              <p className="mt-3 text-xs text-blue-600 font-medium">
-                📅 Menampilkan: {customLabel || 'Pilih bulan & tahun'}
-                {' '}— <span className="text-gray-500">{transactions.length} transaksi ditemukan</span>
-              </p>
+          {loading ? (
+            <div className="flex items-center justify-center py-20">
+              <div className="w-8 h-8 border-4 border-red-400 border-t-transparent rounded-full animate-spin" />
             </div>
-          )}
+          ) : !data ? (
+            <div className="text-center py-20 text-gray-400">Gagal memuat data</div>
+          ) : (
+            <>
+              {/* Stats Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
+                <StatCard icon={<DollarSign className="w-4 h-4" />}  label="Total Pendapatan"   value={formatRupiah(data.stats.totalRevenue)}       color="green"  />
+                <StatCard icon={<ShoppingCart className="w-4 h-4" />} label="Total Transaksi"    value={`${data.stats.totalTransactions} trx`}        color="blue"   />
+                <StatCard icon={<TrendingUp className="w-4 h-4" />}   label="Rata-rata Transaksi" value={formatRupiah(data.stats.averageTransaction)}  color="purple" />
+                <StatCard icon={<Receipt className="w-4 h-4" />}      label="Pendapatan Hari Ini" value={formatRupiah(data.stats.todayRevenue)}        color="red"    />
+              </div>
 
-          {/* ── Stats Cards ───────────────────────────────────────────────── */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-            {[
-              { label: 'Total Pendapatan',   value: formatCurrency(stats.totalRevenue),      icon: DollarSign,  color: 'bg-blue-100 text-blue-600' },
-              { label: 'Total Transaksi',    value: String(stats.totalTransactions),          icon: ShoppingBag, color: 'bg-green-100 text-green-600' },
-              { label: 'Rata-rata Transaksi',value: formatCurrency(stats.averageTransaction), icon: TrendingUp,  color: 'bg-purple-100 text-purple-600' },
-              { label: 'Hari Ini',           value: formatCurrency(stats.todayRevenue),       icon: Calendar,    color: 'bg-orange-100 text-orange-600' },
-            ].map(s => (
-              <Card key={s.label}>
-                <div className="flex items-center justify-between">
+              {/* Keuangan Summary */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-5">
+                <div className="bg-green-50 rounded-xl p-4 flex items-center gap-3">
+                  <ArrowUpRight className="w-8 h-8 text-green-500 flex-shrink-0" />
                   <div>
-                    <p className="text-sm text-gray-600 mb-1">{s.label}</p>
-                    <p className="text-2xl font-bold text-gray-800">{s.value}</p>
-                  </div>
-                  <div className={`p-3 rounded-full ${s.color}`}>
-                    <s.icon className="w-6 h-6" />
+                    <p className="text-xs text-gray-500">Laba Kotor</p>
+                    <p className="text-base font-bold text-green-600">{formatRupiah(data.keuangan.labaKotor)}</p>
                   </div>
                 </div>
-              </Card>
-            ))}
-          </div>
+                <div className="bg-emerald-50 rounded-xl p-4 flex items-center gap-3">
+                  <Wallet className="w-8 h-8 text-emerald-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-500">Laba Bersih</p>
+                    <p className="text-base font-bold text-emerald-600">{formatRupiah(data.keuangan.labaBersih)}</p>
+                  </div>
+                </div>
+                <div className="bg-red-50 rounded-xl p-4 flex items-center gap-3">
+                  <ArrowDownRight className="w-8 h-8 text-red-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-500">Total Pengeluaran</p>
+                    <p className="text-base font-bold text-red-600">{formatRupiah(data.keuangan.totalPengeluaran)}</p>
+                  </div>
+                </div>
+                <div className="bg-orange-50 rounded-xl p-4 flex items-center gap-3">
+                  <Package className="w-8 h-8 text-orange-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-500">Pembelian Stok</p>
+                    <p className="text-base font-bold text-orange-600">{formatRupiah(data.keuangan.totalPembelianStok)}</p>
+                  </div>
+                </div>
+                <div className="bg-pink-50 rounded-xl p-4 flex items-center gap-3">
+                  <Receipt className="w-8 h-8 text-pink-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-500">Biaya Operasional</p>
+                    <p className="text-base font-bold text-pink-600">{formatRupiah(data.keuangan.totalBiayaOperasional)}</p>
+                  </div>
+                </div>
+                <div className="bg-blue-50 rounded-xl p-4 flex items-center gap-3">
+                  <DollarSign className="w-8 h-8 text-blue-500 flex-shrink-0" />
+                  <div>
+                    <p className="text-xs text-gray-500">Total Pendapatan</p>
+                    <p className="text-base font-bold text-blue-600">{formatRupiah(data.keuangan.totalPendapatan)}</p>
+                  </div>
+                </div>
+              </div>
 
-          {/* ── Tabel Transaksi ───────────────────────────────────────────── */}
-          <Card title="Riwayat Transaksi">
-            <p className="text-xs text-gray-400 mb-3">
-              Klik baris transaksi untuk melihat detail produk •
-              <span className="inline-flex items-center gap-1 ml-2"><Store className="w-3 h-3" /> = Kasir</span>
-              <span className="inline-flex items-center gap-1 ml-2"><Smartphone className="w-3 h-3" /> = Customer Order</span>
-            </p>
+              {/* Tabs */}
+              <div className="flex gap-1 bg-white rounded-xl border border-gray-100 shadow-sm p-1 mb-4">
+                {[
+                  { key: 'transaksi',   label: `Transaksi (${data.transactions.length})` },
+                  { key: 'pengeluaran', label: `Pengeluaran (${data.pengeluaranList.length})` },
+                  { key: 'keuangan',    label: 'Ringkasan Keuangan' },
+                ].map(t => (
+                  <button key={t.key} onClick={() => setActiveTab(t.key as typeof activeTab)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-semibold transition-all ${activeTab === t.key ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500 hover:bg-gray-50'}`}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="w-8 px-2 py-3" />
-                    {['No. Transaksi','Sumber','Tanggal','Kasir / Meja','Item','Total','Pembayaran'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  {loading ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-gray-400">
-                        <div className="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                        Memuat data...
-                      </td>
-                    </tr>
-                  ) : transactions.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="px-4 py-8 text-center text-gray-500">Tidak ada transaksi</td>
-                    </tr>
-                  ) : transactions.map(transaction => {
-                    const isExpanded = expandedRows.has(transaction.id);
-                    return (
-                      <React.Fragment key={transaction.id}>
-                        {/* Main row */}
-                        <tr onClick={() => toggleRow(transaction.id)}
-                          className="hover:bg-blue-50 cursor-pointer transition-colors">
-                          <td className="px-2 py-3 text-center text-gray-400">
-                            {isExpanded
-                              ? <ChevronUp className="w-4 h-4 mx-auto" />
-                              : <ChevronDown className="w-4 h-4 mx-auto" />}
-                          </td>
-                          <td className="px-4 py-3 text-sm font-medium text-gray-900">{transaction.transactionNumber}</td>
-                          <td className="px-4 py-3 text-sm">
-                            {transaction.source === 'customer' ? (
-                              <span className="flex items-center gap-1 text-orange-600"><Smartphone className="w-3 h-3" /> Customer</span>
-                            ) : (
-                              <span className="flex items-center gap-1 text-blue-600"><Store className="w-3 h-3" /> Kasir</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {new Date(transaction.createdAt).toLocaleString('id-ID', {
-                              day: '2-digit', month: 'short', year: 'numeric',
-                              hour: '2-digit', minute: '2-digit',
-                            })}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {transaction.source === 'customer'
-                              ? `${transaction.tableInfo || '-'} · ${transaction.customerName || 'Customer'}`
-                              : transaction.cashierName}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">{transaction.items.length} item</td>
-                          <td className="px-4 py-3 text-sm font-semibold text-gray-900">{formatCurrency(transaction.total)}</td>
-                          <td className="px-4 py-3 text-sm">
-                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${paymentColor(transaction.paymentMethod)}`}>
-                              {paymentLabel(transaction.paymentMethod)}
-                            </span>
-                          </td>
+              {/* Tab: Transaksi */}
+              {activeTab === 'transaksi' && (
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  {data.transactions.length === 0 ? (
+                    <div className="p-8 text-center text-gray-400 text-sm">Tidak ada transaksi pada periode ini</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs">Waktu</th>
+                            <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs">No. Transaksi</th>
+                            <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs hidden sm:table-cell">Sumber</th>
+                            <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs hidden sm:table-cell">Kasir</th>
+                            <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs hidden md:table-cell">Pembayaran</th>
+                            <th className="text-right px-4 py-3 text-gray-600 font-medium text-xs">Total</th>
+                            <th className="px-4 py-3 w-8"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {data.transactions.map(tx => (
+                            <TransactionRow
+                              key={tx.id}
+                              tx={tx}
+                              expanded={expandedId === tx.id}
+                              onToggle={() => setExpandedId(expandedId === tx.id ? null : tx.id)}
+                            />
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-gray-50 border-t">
+                          <tr>
+                            <td colSpan={5} className="px-4 py-3 text-right text-sm font-bold text-gray-700">Total Pendapatan</td>
+                            <td className="px-4 py-3 text-right font-black text-green-600">{formatRupiah(data.stats.totalRevenue)}</td>
+                            <td />
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Pengeluaran */}
+              {activeTab === 'pengeluaran' && (
+                <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  {data.pengeluaranList.length === 0 ? (
+                    <div className="p-8 text-center text-gray-400 text-sm">Tidak ada pengeluaran pada periode ini</div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b">
+                        <tr>
+                          <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs">Tanggal</th>
+                          <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs">Kategori</th>
+                          <th className="text-left px-4 py-3 text-gray-600 font-medium text-xs hidden sm:table-cell">Keterangan</th>
+                          <th className="text-right px-4 py-3 text-gray-600 font-medium text-xs">Jumlah</th>
+                          <th className="text-center px-4 py-3 text-gray-600 font-medium text-xs">Sumber</th>
                         </tr>
-
-                        {/* Expanded detail */}
-                        {isExpanded && (
-                          <tr className="bg-blue-50">
-                            <td colSpan={8} className="px-6 py-3">
-                              <div className="rounded-lg overflow-hidden border border-blue-100">
-                                <table className="w-full text-sm">
-                                  <thead className="bg-blue-100">
-                                    <tr>
-                                      {['Produk','Qty','Harga Satuan','Subtotal'].map((h, i) => (
-                                        <th key={h} className={`px-4 py-2 text-xs font-semibold text-blue-700 ${i === 0 ? 'text-left' : i === 1 ? 'text-center' : 'text-right'}`}>{h}</th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody className="bg-white divide-y divide-gray-100">
-                                    {transaction.items.map((item, i) => (
-                                      <tr key={i}>
-                                        <td className="px-4 py-2 font-medium text-gray-800">{item.productName}</td>
-                                        <td className="px-4 py-2 text-center text-gray-600">{item.quantity}</td>
-                                        <td className="px-4 py-2 text-right text-gray-600">{formatCurrency(item.price)}</td>
-                                        <td className="px-4 py-2 text-right font-semibold text-gray-800">{formatCurrency(item.subtotal)}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                  <tfoot className="bg-gray-50 border-t border-gray-200">
-                                    <tr>
-                                      <td colSpan={3} className="px-4 py-2 text-right text-sm font-bold text-gray-700">Total</td>
-                                      <td className="px-4 py-2 text-right text-sm font-bold text-blue-600">{formatCurrency(transaction.total)}</td>
-                                    </tr>
-                                    {transaction.paymentMethod === 'cash' && transaction.change > 0 && (
-                                      <>
-                                        <tr>
-                                          <td colSpan={3} className="px-4 py-1 text-right text-xs text-gray-500">Bayar</td>
-                                          <td className="px-4 py-1 text-right text-xs text-gray-600">{formatCurrency(transaction.paymentAmount)}</td>
-                                        </tr>
-                                        <tr>
-                                          <td colSpan={3} className="px-4 py-1 text-right text-xs text-gray-500">Kembalian</td>
-                                          <td className="px-4 py-1 text-right text-xs font-semibold text-green-600">{formatCurrency(transaction.change)}</td>
-                                        </tr>
-                                      </>
-                                    )}
-                                  </tfoot>
-                                </table>
-                              </div>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {data.pengeluaranList.map((item, idx) => (
+                          <tr key={`${item.source}-${item.id}-${idx}`} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-gray-700 whitespace-nowrap text-xs">
+                              {format(new Date(item.tanggal), 'd MMM yyyy', { locale: id })}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${item.source === 'pembelian' ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                                {item.kategori}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-gray-600 hidden sm:table-cell text-xs">{item.keterangan}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-gray-800">{formatRupiah(item.jumlah)}</td>
+                            <td className="px-4 py-3 text-center">
+                              {item.source === 'pembelian'
+                                ? <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Auto</span>
+                                : <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">Manual</span>}
                             </td>
                           </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50 border-t">
+                        <tr>
+                          <td colSpan={3} className="px-4 py-3 text-right text-sm font-bold text-gray-700">Total Pengeluaran</td>
+                          <td className="px-4 py-3 text-right font-black text-red-600">
+                            {formatRupiah(data.pengeluaranList.reduce((s, i) => s + i.jumlah, 0))}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  )}
+                </div>
+              )}
 
+              {/* Tab: Ringkasan Keuangan */}
+              {activeTab === 'keuangan' && (
+                <div className="space-y-4">
+                  {/* Ringkasan per Kategori Pengeluaran */}
+                  {Object.keys(data.pengeluaranPerKategori).length > 0 && (
+                    <div className="bg-white rounded-xl shadow-sm p-5">
+                      <h2 className="text-sm font-semibold text-gray-700 mb-4">Pengeluaran per Kategori</h2>
+                      <div className="space-y-3">
+                        {Object.entries(data.pengeluaranPerKategori)
+                          .sort((a, b) => b[1] - a[1])
+                          .map(([kat, total]) => {
+                            const pct = data.keuangan.totalPengeluaran > 0
+                              ? Math.round((total / data.keuangan.totalPengeluaran) * 100) : 0;
+                            return (
+                              <div key={kat}>
+                                <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                  <span>{kat}</span>
+                                  <span className="font-semibold">{formatRupiah(total)} <span className="text-gray-400">({pct}%)</span></span>
+                                </div>
+                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className="h-full bg-red-400 rounded-full" style={{ width: `${pct}%` }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Tabel ringkasan akhir */}
+                  <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+                    <table className="w-full text-sm">
+                      <tbody>
+                        {[
+                          { label: 'Total Pendapatan',       value: data.keuangan.totalPendapatan,       color: 'text-green-600' },
+                          { label: 'HPP / Pembelian Stok',   value: -data.keuangan.totalPembelianStok,   color: 'text-orange-600' },
+                          { label: 'Laba Kotor',             value: data.keuangan.labaKotor,             color: 'text-green-700 font-bold' },
+                          { label: 'Biaya Operasional',      value: -data.keuangan.totalBiayaOperasional, color: 'text-pink-600' },
+                          { label: 'Laba Bersih',            value: data.keuangan.labaBersih,            color: `font-black text-lg ${data.keuangan.labaBersih >= 0 ? 'text-emerald-600' : 'text-red-600'}` },
+                        ].map((row, i) => (
+                          <tr key={i} className={`border-b last:border-0 ${i === 4 ? 'bg-emerald-50' : 'hover:bg-gray-50'}`}>
+                            <td className="px-5 py-3 text-gray-600 text-sm">{row.label}</td>
+                            <td className={`px-5 py-3 text-right ${row.color}`}>{formatRupiah(Math.abs(row.value))}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </ProtectedRoute>

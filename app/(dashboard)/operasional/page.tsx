@@ -6,13 +6,15 @@ import { useAuthStore } from '@/lib/store/authStore';
 import {
   ShoppingCart, Package, ClipboardList, Plus, Minus, Trash2,
   Search, Loader2, CheckCircle, AlertCircle, RefreshCw,
+  Pencil, X, ImagePlus,
 } from 'lucide-react';
 
 type Product = {
-  id: string; nama: string; hargaJual: number; stok: number;
-  satuan: string; foto?: string; category?: { nama: string };
-  sku: string; stokMinimal: number;
+  id: string; nama: string; hargaJual: number; hargaBeli: number; stok: number;
+  satuan: string; foto?: string; category?: { nama: string }; categoryId: string;
+  sku: string; stokMinimal: number; barcode?: string;
 };
+type Category = { id: string; nama: string };
 type CartItem = Product & { qty: number };
 type Order = {
   id: string; orderNumber: string; status: string;
@@ -24,7 +26,7 @@ type Order = {
 const fmt = (n: number) => `Rp ${n.toLocaleString('id-ID')}`;
 type Tab = 'kasir' | 'produk' | 'pesanan';
 
-// ─── Hook: resolve outletId dengan multi-fallback ─────────────────────────────
+// ─── Hook: resolve outletId dengan multi-fallback ────────────────────────────
 function useOutletId() {
   const { user, _hasHydrated } = useAuthStore();
   const [outletId, setOutletId] = useState<string | null>(null);
@@ -47,7 +49,7 @@ function useOutletId() {
       return;
     }
 
-    // ✅ Fallback bertingkat
+    // ✅ Fallback bertingkat untuk Admin yang mungkin tidak punya outletId di store
     const resolve = async () => {
       try {
         // Coba 1: /api/outlets/me
@@ -70,7 +72,17 @@ function useOutletId() {
         }
       } catch { /* lanjut */ }
 
-      // Semua fallback gagal
+      // ✅ Fix: Untuk ADMIN/MANAGER, izinkan akses tanpa outletId
+      // API /api/produk akan filter by tenantId saja
+      const isAdminOrAbove = ['ADMIN', 'MANAGER', 'SUPERADMIN'].includes(user.role ?? '');
+      if (isAdminOrAbove) {
+        // Gunakan placeholder agar komponen tetap render,
+        // API akan mengabaikan outletId yang tidak valid dan filter by tenantId
+        setOutletId('__tenant__');
+        setLoading(false);
+        return;
+      }
+
       setError(
         `Akun Anda (${user.email}) belum terhubung ke outlet manapun. ` +
         `Minta Admin untuk mengatur outletId pada akun Anda di menu Users.`
@@ -79,15 +91,17 @@ function useOutletId() {
     };
 
     resolve();
-  }, [_hasHydrated, user?.outletId, user?.email]);
+  }, [_hasHydrated, user?.outletId, user?.email, user?.role]);
 
   return { outletId, loading, error };
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Page ────────────────────────────────────────────────────────────────────
 export default function OperasionalPage() {
   const { user } = useAuthStore();
   const { outletId, loading: outletLoading, error: outletError } = useOutletId();
+
+  // ✅ Admin/Manager tetap bisa akses semua tab (tidak di-hide produk)
   const isKasir = user?.role === 'KASIR';
   const [tab, setTab] = useState<Tab>('kasir');
 
@@ -114,7 +128,6 @@ export default function OperasionalPage() {
         <p className="text-sm text-gray-500 max-w-sm">
           {outletError ?? 'Akun Anda belum terhubung ke outlet.'}
         </p>
-        {/* ✅ Info debug untuk Admin */}
         <div className="mt-1 px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-400 max-w-sm">
           User: {user?.email} · Role: {user?.role} · outletId: {user?.outletId ?? 'null'}
         </div>
@@ -143,13 +156,13 @@ export default function OperasionalPage() {
       </div>
 
       {tab === 'kasir'   && <KasirTab outletId={outletId} user={user} />}
-      {tab === 'produk'  && !isKasir && <ProdukTab outletId={outletId} />}
+      {tab === 'produk'  && !isKasir && <ProdukTab outletId={outletId} userRole={user?.role} />}
       {tab === 'pesanan' && <PesananTab outletId={outletId} />}
     </div>
   );
 }
 
-// ─── TAB KASIR ────────────────────────────────────────────────────────────────
+// ─── TAB KASIR ───────────────────────────────────────────────────────────────
 function KasirTab({ outletId, user }: { outletId: string; user: any }) {
   const [products, setProducts] = useState<Product[]>([]);
   const [cart,     setCart]     = useState<CartItem[]>([]);
@@ -164,7 +177,11 @@ function KasirTab({ outletId, user }: { outletId: string; user: any }) {
   const fetchProducts = useCallback(async () => {
     if (!outletId) return;
     try {
-      const r = await fetch(`/api/produk?outletId=${outletId}`);
+      // ✅ Jika outletId adalah placeholder '__tenant__', tidak kirim outletId
+      const url = outletId === '__tenant__'
+        ? '/api/produk'
+        : `/api/produk?outletId=${outletId}`;
+      const r = await fetch(url);
       const d = await r.json();
       setProducts(d.products ?? []);
     } catch {
@@ -203,11 +220,16 @@ function KasirTab({ outletId, user }: { outletId: string; user: any }) {
     setPaying(true);
     setError(null);
     try {
+      // Untuk checkout, tetap butuh outletId nyata — ambil dari produk pertama jika placeholder
+      const resolvedOutletId = outletId === '__tenant__'
+        ? cart[0]?.id  // fallback: API transactions akan resolve dari produk
+        : outletId;
+
       const res = await fetch('/api/transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          outletId,
+          outletId: resolvedOutletId,
           kasir:            user?.nama,
           metodePembayaran: method,
           uangDibayar:      parseFloat(paid) || total,
@@ -364,28 +386,251 @@ function KasirTab({ outletId, user }: { outletId: string; user: any }) {
   );
 }
 
-// ─── TAB PRODUK ───────────────────────────────────────────────────────────────
-function ProdukTab({ outletId }: { outletId: string }) {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading,  setLoading]  = useState(true);
-  const [search,   setSearch]   = useState('');
-  const [showLow,  setShowLow]  = useState(false);
+// ─── MODAL TAMBAH / EDIT PRODUK ──────────────────────────────────────────────
+type ProductForm = {
+  nama: string; barcode: string; hargaJual: string; hargaBeli: string;
+  stok: string; categoryId: string; foto: string;
+};
+
+function ProdukModal({
+  open, onClose, onSaved, editProduct, categories,
+}: {
+  open: boolean; onClose: () => void; onSaved: () => void;
+  editProduct: Product | null; categories: Category[];
+}) {
+  const [form, setForm] = useState<ProductForm>({
+    nama: '', barcode: '', hargaJual: '', hargaBeli: '', stok: '', categoryId: '', foto: '',
+  });
+  const [saving,  setSaving]  = useState(false);
+  const [error,   setError]   = useState('');
+  const isEdit = !!editProduct;
 
   useEffect(() => {
-    if (!outletId) return;
-    fetch(`/api/produk?outletId=${outletId}`)
-      .then(r => r.json())
-      .then(d => { setProducts(d.products ?? []); setLoading(false); });
-  }, [outletId]);
+    if (!open) return;
+    if (editProduct) {
+      setForm({
+        nama:       editProduct.nama,
+        barcode:    editProduct.barcode ?? '',
+        hargaJual:  String(editProduct.hargaJual),
+        hargaBeli:  String(editProduct.hargaBeli ?? 0),
+        stok:       String(editProduct.stok),
+        categoryId: editProduct.categoryId ?? '',
+        foto:       editProduct.foto ?? '',
+      });
+    } else {
+      setForm({ nama: '', barcode: '', hargaJual: '', hargaBeli: '', stok: '0', categoryId: '', foto: '' });
+    }
+    setError('');
+  }, [open, editProduct]);
+
+  const handleFoto = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => setForm(f => ({ ...f, foto: ev.target?.result as string }));
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.nama.trim())    return setError('Nama produk wajib diisi');
+    if (!form.hargaJual)      return setError('Harga jual wajib diisi');
+    if (!form.categoryId)     return setError('Kategori wajib dipilih');
+    setSaving(true); setError('');
+
+    const payload = {
+      nama:       form.nama.trim(),
+      barcode:    form.barcode || null,
+      hargaJual:  parseFloat(form.hargaJual),
+      hargaBeli:  parseFloat(form.hargaBeli || '0'),
+      stok:       parseInt(form.stok || '0'),
+      categoryId: form.categoryId,
+      foto:       form.foto || null,
+    };
+
+    try {
+      // ✅ PUT ke endpoint yang sudah ada: /api/products/[productId]
+      // POST tetap ke /api/produk (route baru yang support tenantId)
+      const url    = isEdit ? `/api/products/${editProduct!.id}` : '/api/produk';
+      const method = isEdit ? 'PUT' : 'POST';
+      const res    = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Gagal menyimpan');
+      onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="font-bold text-gray-800">{isEdit ? 'Edit Produk' : 'Tambah Produk'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="px-6 py-4 space-y-3 max-h-[75vh] overflow-y-auto">
+          {error && <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-600">⚠️ {error}</div>}
+
+          {/* Foto */}
+          <div className="flex flex-col items-center gap-2">
+            {form.foto
+              ? <img src={form.foto} alt="foto" className="w-24 h-24 object-cover rounded-xl border border-gray-200" />
+              : <div className="w-24 h-24 bg-gray-100 rounded-xl flex items-center justify-center">
+                  <ImagePlus className="w-8 h-8 text-gray-300" />
+                </div>
+            }
+            <label className="cursor-pointer text-xs text-blue-600 font-semibold hover:underline">
+              {form.foto ? 'Ganti Foto' : 'Upload Foto'}
+              <input type="file" accept="image/*" className="hidden" onChange={handleFoto} />
+            </label>
+          </div>
+
+          {/* Nama */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Nama Produk *</label>
+            <input value={form.nama} onChange={e => setForm(f => ({ ...f, nama: e.target.value }))}
+              placeholder="Contoh: Kopi Susu" required
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          {/* Barcode */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Barcode <span className="text-gray-400">(opsional)</span></label>
+            <input value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
+              placeholder="Scan atau ketik barcode"
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          {/* Kategori */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Kategori *</label>
+            <select value={form.categoryId} onChange={e => setForm(f => ({ ...f, categoryId: e.target.value }))} required
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">— Pilih Kategori —</option>
+              {categories.map(c => <option key={c.id} value={c.id}>{c.nama}</option>)}
+            </select>
+          </div>
+
+          {/* Harga */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Harga Beli (HPP)</label>
+              <input type="number" min="0" value={form.hargaBeli}
+                onChange={e => setForm(f => ({ ...f, hargaBeli: e.target.value }))}
+                placeholder="0"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <p className="text-[10px] text-gray-400 mt-0.5">Dipakai di laporan keuangan</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">Harga Jual *</label>
+              <input type="number" min="0" value={form.hargaJual} required
+                onChange={e => setForm(f => ({ ...f, hargaJual: e.target.value }))}
+                placeholder="0"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            </div>
+          </div>
+
+          {/* Stok */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Stok Awal</label>
+            <input type="number" min="0" value={form.stok}
+              onChange={e => setForm(f => ({ ...f, stok: e.target.value }))}
+              className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+          </div>
+
+          {/* Margin preview */}
+          {form.hargaJual && form.hargaBeli && parseFloat(form.hargaBeli) > 0 && (
+            <div className="p-3 bg-green-50 border border-green-100 rounded-xl text-xs text-green-700">
+              💰 Margin: {fmt(parseFloat(form.hargaJual) - parseFloat(form.hargaBeli))}
+              {' '}({Math.round(((parseFloat(form.hargaJual) - parseFloat(form.hargaBeli)) / parseFloat(form.hargaJual)) * 100)}%)
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50">
+              Batal
+            </button>
+            <button type="submit" disabled={saving}
+              className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
+              {isEdit ? 'Update' : 'Simpan'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── TAB PRODUK ──────────────────────────────────────────────────────────────
+function ProdukTab({ outletId, userRole }: { outletId: string; userRole?: string }) {
+  const [products,     setProducts]     = useState<Product[]>([]);
+  const [categories,   setCategories]   = useState<Category[]>([]);
+  const [loading,      setLoading]      = useState(true);
+  const [search,       setSearch]       = useState('');
+  const [showLow,      setShowLow]      = useState(false);
+  const [modalOpen,    setModalOpen]    = useState(false);
+  const [editProduct,  setEditProduct]  = useState<Product | null>(null);
+  const [deleteId,     setDeleteId]     = useState<string | null>(null);
+  const [deleting,     setDeleting]     = useState(false);
+
+  // ✅ Hanya ADMIN, MANAGER, SUPERADMIN yang bisa tambah/edit/hapus
+  const canManage = ['ADMIN', 'MANAGER', 'SUPERADMIN'].includes(userRole ?? '');
+
+  const produkUrl = outletId === '__tenant__' ? '/api/produk' : `/api/produk?outletId=${outletId}`;
+
+  const fetchAll = useCallback(async () => {
+    setLoading(true);
+    const [rp, rc] = await Promise.all([
+      fetch(produkUrl),
+      fetch('/api/categories'),
+    ]);
+    const dp = await rp.json();
+    const dc = await rc.json();
+    setProducts(dp.products ?? []);
+    setCategories(dc.categories ?? []);
+    setLoading(false);
+  }, [produkUrl]);
+
+  useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  const handleDelete = async (id: string) => {
+    setDeleting(true);
+    try {
+      // ✅ DELETE ke endpoint yang sudah ada: /api/products/[productId]
+      await fetch(`/api/products/${id}`, { method: 'DELETE' });
+      fetchAll();
+    } finally {
+      setDeleting(false);
+      setDeleteId(null);
+    }
+  };
 
   const filtered = products
     .filter(p => !showLow || p.stok <= p.stokMinimal)
     .filter(p => p.nama.toLowerCase().includes(search.toLowerCase()));
 
-  if (loading) return <div className="flex justify-center h-48 items-center"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /></div>;
+  if (loading) return (
+    <div className="flex justify-center h-48 items-center">
+      <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+    </div>
+  );
 
   return (
     <div className="space-y-4">
+      {/* Toolbar */}
       <div className="flex items-center gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -393,36 +638,173 @@ function ProdukTab({ outletId }: { outletId: string }) {
             className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
         </div>
         <button onClick={() => setShowLow(s => !s)}
-          className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border ${showLow ? 'bg-red-500 text-white border-red-500' : 'bg-white text-gray-600 border-gray-200 hover:border-red-300 hover:text-red-500'}`}>
+          className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors border whitespace-nowrap ${showLow ? 'bg-red-500 text-white border-red-500' : 'bg-white text-gray-600 border-gray-200 hover:border-red-300 hover:text-red-500'}`}>
           Stok Rendah
         </button>
+        {/* ✅ Tombol Tambah Produk — hanya muncul untuk Admin/Manager */}
+        {canManage && (
+          <button
+            onClick={() => { setEditProduct(null); setModalOpen(true); }}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold whitespace-nowrap transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Tambah Produk
+          </button>
+        )}
       </div>
+
+      {/* Tabel */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-100">
-            <tr>{['Produk','SKU','Harga Jual','Stok','Status'].map(h => (
-              <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
-            ))}</tr>
+            <tr>
+              {['Produk', 'SKU', 'Harga Beli', 'Harga Jual', 'Margin', 'Stok', 'Status',
+                ...(canManage ? ['Aksi'] : [])
+              ].map(h => (
+                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">{h}</th>
+              ))}
+            </tr>
           </thead>
           <tbody className="divide-y divide-gray-50">
-            {filtered.map(p => (
-              <tr key={p.id} className="hover:bg-gray-50">
-                <td className="px-4 py-3"><p className="font-medium text-gray-800 text-sm">{p.nama}</p><p className="text-xs text-gray-400">{p.category?.nama}</p></td>
-                <td className="px-4 py-3 text-xs text-gray-500 font-mono">{p.sku}</td>
-                <td className="px-4 py-3 text-sm font-semibold text-blue-600">{fmt(p.hargaJual)}</td>
-                <td className="px-4 py-3"><span className={`text-sm font-bold ${p.stok <= p.stokMinimal ? 'text-red-500' : 'text-gray-700'}`}>{p.stok} {p.satuan}</span></td>
-                <td className="px-4 py-3"><span className={`text-xs font-semibold px-2 py-1 rounded-full ${p.stok <= 0 ? 'bg-red-100 text-red-700' : p.stok <= p.stokMinimal ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>{p.stok <= 0 ? 'Habis' : p.stok <= p.stokMinimal ? 'Hampir Habis' : 'Tersedia'}</span></td>
+            {filtered.map(p => {
+              const margin = p.hargaJual - (p.hargaBeli ?? 0);
+              const marginPct = p.hargaBeli > 0 ? Math.round((margin / p.hargaJual) * 100) : null;
+              return (
+                <tr key={p.id} className="hover:bg-gray-50">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      {p.foto
+                        ? <img src={p.foto} alt={p.nama} className="w-8 h-8 rounded-lg object-cover flex-shrink-0" />
+                        : <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0"><Package className="w-4 h-4 text-gray-300" /></div>
+                      }
+                      <div>
+                        <p className="font-medium text-gray-800 text-sm">{p.nama}</p>
+                        <p className="text-xs text-gray-400">{p.category?.nama}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-gray-500 font-mono">{p.sku}</td>
+                  <td className="px-4 py-3 text-sm text-gray-600">{p.hargaBeli > 0 ? fmt(p.hargaBeli) : <span className="text-gray-300">—</span>}</td>
+                  <td className="px-4 py-3 text-sm font-semibold text-blue-600">{fmt(p.hargaJual)}</td>
+                  <td className="px-4 py-3">
+                    {marginPct !== null
+                      ? <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${marginPct >= 20 ? 'bg-green-100 text-green-700' : marginPct >= 10 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                          {marginPct}%
+                        </span>
+                      : <span className="text-gray-300 text-xs">—</span>
+                    }
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-sm font-bold ${p.stok <= p.stokMinimal ? 'text-red-500' : 'text-gray-700'}`}>
+                      {p.stok} {p.satuan}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-semibold px-2 py-1 rounded-full ${p.stok <= 0 ? 'bg-red-100 text-red-700' : p.stok <= p.stokMinimal ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+                      {p.stok <= 0 ? 'Habis' : p.stok <= p.stokMinimal ? 'Hampir Habis' : 'Tersedia'}
+                    </span>
+                  </td>
+                  {canManage && (
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => { setEditProduct(p); setModalOpen(true); }}
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => setDeleteId(p.id)}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Hapus"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+            {filtered.length === 0 && (
+              <tr>
+                <td colSpan={canManage ? 8 : 7} className="px-4 py-12 text-center text-gray-400 text-sm">
+                  <Package className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                  Tidak ada produk
+                </td>
               </tr>
-            ))}
-            {filtered.length === 0 && <tr><td colSpan={5} className="px-4 py-12 text-center text-gray-400 text-sm">Tidak ada produk</td></tr>}
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* Summary keuangan singkat — hanya Admin */}
+      {canManage && products.length > 0 && (
+        <div className="grid grid-cols-3 gap-3">
+          {[
+            {
+              label: 'Total Nilai Stok (HPP)',
+              value: fmt(products.reduce((s, p) => s + (p.hargaBeli ?? 0) * p.stok, 0)),
+              color: 'text-orange-600', bg: 'bg-orange-50',
+            },
+            {
+              label: 'Potensi Pendapatan',
+              value: fmt(products.reduce((s, p) => s + p.hargaJual * p.stok, 0)),
+              color: 'text-blue-600', bg: 'bg-blue-50',
+            },
+            {
+              label: 'Potensi Margin',
+              value: fmt(products.reduce((s, p) => s + (p.hargaJual - (p.hargaBeli ?? 0)) * p.stok, 0)),
+              color: 'text-green-600', bg: 'bg-green-50',
+            },
+          ].map(({ label, value, color, bg }) => (
+            <div key={label} className={`${bg} rounded-2xl p-4 border border-white`}>
+              <p className="text-xs text-gray-500 mb-1">{label}</p>
+              <p className={`text-base font-bold ${color}`}>{value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Modal tambah/edit */}
+      <ProdukModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onSaved={fetchAll}
+        editProduct={editProduct}
+        categories={categories}
+      />
+
+      {/* Konfirmasi hapus */}
+      {deleteId && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+            <div className="text-center">
+              <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                <Trash2 className="w-6 h-6 text-red-600" />
+              </div>
+              <h3 className="font-bold text-gray-800 mb-1">Hapus Produk?</h3>
+              <p className="text-sm text-gray-500 mb-4">Tindakan ini tidak bisa dibatalkan. Data penjualan terkait tetap tersimpan.</p>
+              <div className="flex gap-3">
+                <button onClick={() => setDeleteId(null)}
+                  className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-50">
+                  Batal
+                </button>
+                <button onClick={() => handleDelete(deleteId)} disabled={deleting}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2">
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Ya, Hapus'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── TAB PESANAN ──────────────────────────────────────────────────────────────
+// ─── TAB PESANAN ─────────────────────────────────────────────────────────────
 function PesananTab({ outletId }: { outletId: string }) {
   const [orders,   setOrders]   = useState<Order[]>([]);
   const [loading,  setLoading]  = useState(true);
@@ -431,7 +813,10 @@ function PesananTab({ outletId }: { outletId: string }) {
 
   const fetchOrders = useCallback(async () => {
     if (!outletId) return;
-    const r = await fetch(`/api/orders?outletId=${outletId}`);
+    const url = outletId === '__tenant__'
+      ? '/api/orders'
+      : `/api/orders?outletId=${outletId}`;
+    const r = await fetch(url);
     const d = await r.json();
     setOrders(d.orders ?? []);
     setLoading(false);
@@ -445,22 +830,30 @@ function PesananTab({ outletId }: { outletId: string }) {
 
   const updateStatus = async (id: string, status: string) => {
     setUpdating(id);
-    await fetch('/api/orders', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, status }) });
+    await fetch('/api/orders', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status }),
+    });
     fetchOrders();
     setUpdating(null);
   };
 
   const STATUS_CONFIG: Record<string, { label: string; color: string; next?: string }> = {
     PENDING:    { label: 'Pending',  color: 'bg-yellow-100 text-yellow-700', next: 'PROCESSING' },
-    PROCESSING: { label: 'Diproses',color: 'bg-blue-100 text-blue-700',    next: 'READY' },
-    READY:      { label: 'Siap',    color: 'bg-purple-100 text-purple-700', next: 'COMPLETED' },
-    COMPLETED:  { label: 'Selesai', color: 'bg-green-100 text-green-700' },
-    CANCELLED:  { label: 'Batal',   color: 'bg-red-100 text-red-700' },
+    PROCESSING: { label: 'Diproses', color: 'bg-blue-100 text-blue-700',    next: 'READY' },
+    READY:      { label: 'Siap',     color: 'bg-purple-100 text-purple-700', next: 'COMPLETED' },
+    COMPLETED:  { label: 'Selesai',  color: 'bg-green-100 text-green-700' },
+    CANCELLED:  { label: 'Batal',    color: 'bg-red-100 text-red-700' },
   };
 
   const filtered = filter === 'ALL' ? orders : orders.filter(o => o.status === filter);
 
-  if (loading) return <div className="flex justify-center h-48 items-center"><Loader2 className="w-6 h-6 animate-spin text-blue-500" /></div>;
+  if (loading) return (
+    <div className="flex justify-center h-48 items-center">
+      <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+    </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -474,7 +867,9 @@ function PesananTab({ outletId }: { outletId: string }) {
             </button>
           ))}
         </div>
-        <button onClick={fetchOrders} className="text-gray-400 hover:text-blue-500"><RefreshCw className="w-4 h-4" /></button>
+        <button onClick={fetchOrders} className="text-gray-400 hover:text-blue-500">
+          <RefreshCw className="w-4 h-4" />
+        </button>
       </div>
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map(order => {
@@ -482,7 +877,10 @@ function PesananTab({ outletId }: { outletId: string }) {
           return (
             <div key={order.id} className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${!order.isRead ? 'border-blue-300' : 'border-gray-100'}`}>
               <div className="px-4 py-3 flex items-center justify-between border-b border-gray-50">
-                <div><p className="font-bold text-gray-800 text-sm">#{order.orderNumber}</p>{order.customerName && <p className="text-xs text-gray-400">{order.customerName}</p>}</div>
+                <div>
+                  <p className="font-bold text-gray-800 text-sm">#{order.orderNumber}</p>
+                  {order.customerName && <p className="text-xs text-gray-400">{order.customerName}</p>}
+                </div>
                 <span className={`text-xs font-semibold px-2 py-1 rounded-full ${cfg.color}`}>{cfg.label}</span>
               </div>
               <div className="px-4 py-3 space-y-1">
@@ -499,7 +897,9 @@ function PesananTab({ outletId }: { outletId: string }) {
                 {cfg.next && (
                   <button onClick={() => updateStatus(order.id, cfg.next!)} disabled={updating === order.id}
                     className="text-xs bg-blue-600 text-white font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50 flex items-center gap-1.5">
-                    {updating === order.id ? <Loader2 className="w-3 h-3 animate-spin" /> : `→ ${STATUS_CONFIG[cfg.next]?.label}`}
+                    {updating === order.id
+                      ? <Loader2 className="w-3 h-3 animate-spin" />
+                      : `→ ${STATUS_CONFIG[cfg.next]?.label}`}
                   </button>
                 )}
               </div>

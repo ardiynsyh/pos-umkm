@@ -1,53 +1,59 @@
-// app/api/menu-permissions/route.ts
+// PATH: app/api/menu-permissions/route.ts
+
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
 const ALL_MENUS = [
-  { key: 'kasir', label: 'Kasir' },
-  { key: 'produk', label: 'Produk' },
-  { key: 'laporan', label: 'Laporan' },
-  { key: 'pesanan', label: 'Pesanan' },
-  { key: 'pengeluaran', label: 'Pengeluaran' },
-  { key: 'supplier', label: 'Supplier' },
-  { key: 'pembelian', label: 'Pembelian' },
+  { key: 'kasir',            label: 'Kasir' },
+  { key: 'produk',           label: 'Produk' },
+  { key: 'laporan',          label: 'Laporan' },
+  { key: 'pesanan',          label: 'Pesanan' },
+  { key: 'pengeluaran',      label: 'Pengeluaran' },
+  { key: 'supplier',         label: 'Supplier' },
   { key: 'target-penjualan', label: 'Target Penjualan' },
-  { key: 'users', label: 'Users' },
-  { key: 'settings', label: 'Settings' },
-  { key: 'absensi', label: 'Absensi' },
-  { key: 'jadwal', label: 'Jadwal' },
-  { key: 'log-aktivitas', label: 'Log Aktivitas' },
-  { key: 'payroll', label: 'Payroll' },
+  { key: 'users',            label: 'Users' },
+  { key: 'settings',         label: 'Settings' },
+  { key: 'absensi',          label: 'Absensi' },
+  { key: 'jadwal',           label: 'Jadwal' },
+  { key: 'log-aktivitas',    label: 'Log Aktivitas' },
+  { key: 'payroll',          label: 'Payroll' },
 ];
 
 const CONFIGURABLE_ROLES = ['ADMIN', 'MANAGER', 'KASIR'];
 
+// ── GET /api/menu-permissions ─────────────────────────────────────────────────
 export async function GET(req: NextRequest) {
-  console.log('[GET /api/menu-permissions] Headers:', {
-    tenantId: req.headers.get('x-tenant-id'),
-    role: req.headers.get('x-user-role')
-  });
+  const headerRole     = req.headers.get('x-user-role');
+  const headerTenantId = req.headers.get('x-tenant-id');
 
-  const tenantId = req.headers.get('x-tenant-id');
-  const role = req.headers.get('x-user-role');
-  
-  if (role !== 'SUPERADMIN' && !tenantId) {
+  // ✅ SUPERADMIN boleh kirim outletId via query param untuk filter per outlet
+  const { searchParams } = new URL(req.url);
+  const queryOutletId = searchParams.get('outletId');
+
+  // Tentukan tenantId yang dipakai untuk query
+  // Priority: query param (dari UI) > header (dari cookie middleware)
+  const tenantId = queryOutletId ?? headerTenantId;
+
+  // Auth check: non-SUPERADMIN harus punya tenantId
+  if (headerRole !== 'SUPERADMIN' && !tenantId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
-    const whereClause = role === 'SUPERADMIN' ? {} : { tenantId };
-    
+    // ✅ Kalau ada tenantId (dipilih dari UI atau dari header), filter per tenant
+    // Kalau SUPERADMIN tanpa filter → ambil semua (fallback)
+    const whereClause = tenantId ? { tenantId } : {};
+
     const permissions = await prisma.menuPermission.findMany({
       where: whereClause,
     });
 
-    console.log('[GET] Found permissions:', permissions.length);
-
+    // Build hasil: default semua menu = true jika belum ada record
     const result: Record<string, Record<string, boolean>> = {};
     for (const r of CONFIGURABLE_ROLES) {
       result[r] = {};
       for (const menu of ALL_MENUS) {
-        const perm = permissions.find((p) => p.role === r && p.menuKey === menu.key);
+        const perm = permissions.find(p => p.role === r && p.menuKey === menu.key);
         result[r][menu.key] = perm ? perm.isEnabled : true;
       }
     }
@@ -59,103 +65,66 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// ── PUT /api/menu-permissions ─────────────────────────────────────────────────
 export async function PUT(req: NextRequest) {
-  console.log('[PUT /api/menu-permissions] Start');
-  
-  const tenantId = req.headers.get('x-tenant-id');
-  const role = req.headers.get('x-user-role');
-  
-  console.log('[PUT] Headers:', { tenantId, role });
+  const headerRole     = req.headers.get('x-user-role');
+  const headerTenantId = req.headers.get('x-tenant-id');
 
-  if (role !== 'SUPERADMIN' && !tenantId) {
-    console.log('[PUT] Unauthorized - missing tenantId and not SUPERADMIN');
+  if (headerRole !== 'SUPERADMIN' && !headerTenantId) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   try {
     const body = await req.json();
-    console.log('[PUT] Request body:', body);
+    const { role: targetRole, menuKey, isEnabled, outletId: bodyOutletId } = body;
 
-    const { role: targetRole, menuKey, isEnabled } = body;
-    
-    // Validasi data
+    // Validasi field wajib
     if (!targetRole || !menuKey || typeof isEnabled !== 'boolean') {
-      console.log('[PUT] Invalid data:', { targetRole, menuKey, isEnabled });
-      return NextResponse.json({ 
-        error: 'Data tidak valid', 
-        details: { targetRole, menuKey, isEnabled } 
-      }, { status: 400 });
-    }
-    
-    if (!CONFIGURABLE_ROLES.includes(targetRole)) {
-      console.log('[PUT] Invalid role:', targetRole);
-      return NextResponse.json({ 
-        error: 'Role tidak bisa dikonfigurasi' 
-      }, { status: 400 });
+      return NextResponse.json({ error: 'Data tidak valid: role, menuKey, isEnabled wajib diisi' }, { status: 400 });
     }
 
-    let targetTenantId = tenantId;
-    
-    // Jika SUPERADMIN dan tidak ada tenantId, gunakan outlet pertama
-    if (role === 'SUPERADMIN' && !targetTenantId) {
-      console.log('[PUT] SUPERADMIN without tenantId, finding first outlet');
-      const firstOutlet = await prisma.outlet.findFirst();
-      if (firstOutlet) {
-        targetTenantId = firstOutlet.id;
-        console.log('[PUT] Using first outlet:', targetTenantId);
-      } else {
-        console.log('[PUT] No outlets found');
+    if (!CONFIGURABLE_ROLES.includes(targetRole)) {
+      return NextResponse.json({ error: 'Role tidak bisa dikonfigurasi' }, { status: 400 });
+    }
+
+    // ✅ Prioritas tenantId: body (dari UI) > header (dari cookie) > cari outlet pertama
+    let targetTenantId: string | null =
+      bodyOutletId ?? headerTenantId ?? null;
+
+    // SUPERADMIN tanpa outletId → fallback ke outlet pertama
+    if (!targetTenantId && headerRole === 'SUPERADMIN') {
+      const firstOutlet = await prisma.outlet.findFirst({ orderBy: { createdAt: 'asc' } });
+      if (!firstOutlet) {
         return NextResponse.json({ error: 'Tidak ada outlet ditemukan' }, { status: 400 });
       }
+      targetTenantId = firstOutlet.id;
     }
 
     if (!targetTenantId) {
-      console.log('[PUT] No tenantId provided');
-      return NextResponse.json({ error: 'Tenant ID diperlukan' }, { status: 400 });
+      return NextResponse.json({ error: 'Outlet ID diperlukan' }, { status: 400 });
     }
 
-    // Cek apakah outlet dengan ID tersebut ada
-    console.log('[PUT] Checking outlet:', targetTenantId);
-    const outlet = await prisma.outlet.findUnique({
-      where: { id: targetTenantId }
-    });
-
+    // Verifikasi outlet ada
+    const outlet = await prisma.outlet.findUnique({ where: { id: targetTenantId } });
     if (!outlet) {
-      console.log('[PUT] Outlet not found:', targetTenantId);
-      return NextResponse.json({ error: 'Outlet tidak ditemukan' }, { status: 400 });
+      return NextResponse.json({ error: `Outlet "${targetTenantId}" tidak ditemukan` }, { status: 400 });
     }
-
-    console.log('[PUT] Outlet found:', outlet.nama);
 
     // Upsert permission
     const permission = await prisma.menuPermission.upsert({
       where: {
-        menuKey_role_tenantId: {
-          menuKey,
-          role: targetRole,
-          tenantId: targetTenantId
-        }
+        menuKey_role_tenantId: { menuKey, role: targetRole, tenantId: targetTenantId },
       },
       update: { isEnabled },
-      create: {
-        menuKey,
-        role: targetRole,
-        isEnabled,
-        tenantId: targetTenantId
-      },
+      create:  { menuKey, role: targetRole, isEnabled, tenantId: targetTenantId },
     });
 
-    console.log('[PUT] Permission saved:', permission);
-
-    return NextResponse.json({ 
-      success: true,
-      permission 
-    });
+    return NextResponse.json({ success: true, permission });
   } catch (error) {
-    console.error('[PUT /api/menu-permissions] Error:', error);
-    return NextResponse.json({ 
-      error: 'Gagal menyimpan data',
-      details: error instanceof Error ? error.message : 'Unknown error'
+    console.error('[PUT /api/menu-permissions]', error);
+    return NextResponse.json({
+      error:   'Gagal menyimpan data',
+      details: error instanceof Error ? error.message : 'Unknown error',
     }, { status: 500 });
   }
 }

@@ -65,10 +65,6 @@ const NAV: NavEntry[] = [
         key: 'supplier', href: '/keuangan/supplier', label: 'Supplier', icon: Truck,
         roles: ['ADMIN', 'MANAGER'],
       },
-      {
-        key: 'pembelian', href: '/keuangan/pembelian', label: 'Pembelian', icon: Package,
-        roles: ['ADMIN', 'MANAGER'],
-      },
     ],
   },
 

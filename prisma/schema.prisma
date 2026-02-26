@@ -300,15 +300,25 @@ enum PaymentStatus {
 // ─────────────────────────────────────────────────────────────────────────────
 
 model Pengeluaran {
-  id         String   @id @default(cuid())
-  tanggal    DateTime
-  kategori   String
-  keterangan String
-  jumlah     Float
-  tenantId   String
-  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade) // ✅ Cascade
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id          String   @id @default(cuid())
+  tanggal     DateTime
+  kategori    String
+  keterangan  String
+  jumlah      Float
+
+  // Referensi ke pembelian lama (legacy — bisa tetap ada)
+  pembelianId String?
+  sumber      String   @default("manual") // "manual" | "pembelian" | "pelunasan"
+
+  // ✅ NEW: simpan detail item produk sebagai JSON
+  // Format: [{ productId, productName, jumlah, hargaBeli, subtotal }]
+  // null = pengeluaran biasa (bukan pembelian stok)
+  items       Json?
+
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@map("pengeluaran")
 }

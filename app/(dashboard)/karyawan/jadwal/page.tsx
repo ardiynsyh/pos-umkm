@@ -1,3 +1,5 @@
+// PATH: app/karyawan/jadwal/page.tsx
+
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
@@ -60,7 +62,6 @@ export default function JadwalPage() {
   }>({ open: false, userId: '', userName: '', tanggal: '', shift: 'pagi', jadwalId: null })
   const [saving, setSaving] = useState(false)
 
-  // ── Gunakan hook terpusat — otomatis sinkron dengan perubahan di Users ──
   const { users, refetch: refetchUsers } = useUsers()
 
   useEffect(() => { setWeekDates(getWeekDates(weekOffset)) }, [weekOffset])
@@ -73,13 +74,10 @@ export default function JadwalPage() {
       const json   = await res.json()
 
       if (json.success) {
-        // Merge jadwal dari API dengan daftar user terbaru
-        // Sehingga user baru yang ditambah di Users langsung muncul di grid
         const jadwalMap = new Map<string, ScheduleRow>(
           (json.data.jadwal as ScheduleRow[]).map(r => [r.userId, r])
         )
 
-        // Tambahkan user yang belum ada jadwalnya agar tetap muncul di grid
         const merged: ScheduleRow[] = users.map(u => {
           const existing = jadwalMap.get(u.id)
           return existing ?? {
@@ -101,7 +99,6 @@ export default function JadwalPage() {
 
   useEffect(() => { fetchJadwal() }, [fetchJadwal])
 
-  // Refetch users saat halaman mount agar selalu sinkron
   useEffect(() => { refetchUsers() }, [refetchUsers])
 
   function openEditModal(row: ScheduleRow, tanggal: string) {
@@ -122,7 +119,6 @@ export default function JadwalPage() {
       const method = editModal.jadwalId ? 'PUT' : 'POST'
       const url    = editModal.jadwalId ? `/api/jadwal/${editModal.jadwalId}` : '/api/jadwal'
 
-      // Ambil outletId dari user yang dipilih
       const user     = users.find(u => u.id === editModal.userId)
       const outletId = user?.outletId ?? 'o1'
 
@@ -178,7 +174,8 @@ export default function JadwalPage() {
       ) : (
         <div className="grid-card">
           <div className="schedule-grid" style={{ gridTemplateColumns: `200px repeat(7, 1fr)` }}>
-            {/* Header */}
+
+            {/* Header row */}
             <div className="grid-cell grid-cell--header grid-cell--name">Karyawan</div>
             {weekDates.map((date, i) => {
               const isToday = date === today
@@ -192,9 +189,10 @@ export default function JadwalPage() {
               )
             })}
 
-            {/* Rows */}
+            {/* ✅ FIX: key dipindah ke elemen DOM pertama, bukan Fragment */}
             {schedule.map(row => (
-              <>
+              // Gunakan array of elements, bukan Fragment, agar key bisa ditaruh di elemen
+              [
                 <div key={`name-${row.userId}`} className="grid-cell grid-cell--name">
                   <div className="user-avatar-sm" style={{
                     background: roleColors[row.userRole]?.bg ?? '#f1f5f9',
@@ -211,9 +209,9 @@ export default function JadwalPage() {
                       {row.userRole}
                     </span>
                   </div>
-                </div>
+                </div>,
 
-                {weekDates.map(date => {
+                ...weekDates.map(date => {
                   const item    = row.days[date]
                   const cfg     = item ? SHIFT_CONFIG[item.shift] : null
                   const isToday = date === today
@@ -234,8 +232,8 @@ export default function JadwalPage() {
                       )}
                     </div>
                   )
-                })}
-              </>
+                }),
+              ]
             ))}
           </div>
         </div>

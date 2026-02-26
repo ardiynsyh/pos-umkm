@@ -1,3 +1,4 @@
+// app/api/products/[productId]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 
@@ -5,20 +6,26 @@ export async function PUT(
   request: NextRequest,
   context: { params: Promise<{ productId: string }> }
 ) {
+  const role = request.headers.get('x-user-role');
+  if (role === 'KASIR') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   try {
     const { productId } = await context.params;
     const body = await request.json();
-    const { nama, barcode, hargaJual, stok, categoryId, foto } = body;
+    const { nama, barcode, hargaJual, hargaBeli, stok, categoryId, foto } = body;
 
     const product = await prisma.product.update({
       where: { id: productId },
       data: {
         nama,
-        barcode: barcode || null,
-        hargaJual,
-        stok,
+        barcode:   barcode   || null,
+        hargaJual: Number(hargaJual),
+        hargaBeli: hargaBeli !== undefined ? Number(hargaBeli) : undefined, // ✅ update HPP
+        stok:      Number(stok),
         categoryId,
-        foto: foto || null,
+        foto:      foto      || null,
       },
       include: { category: true },
     });
@@ -37,9 +44,14 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   context: { params: Promise<{ productId: string }> }
 ) {
+  const role = request.headers.get('x-user-role');
+  if (role === 'KASIR') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  }
+
   try {
     const { productId } = await context.params;
 

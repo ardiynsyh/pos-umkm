@@ -1,4 +1,5 @@
-// app/(dashboard)/settings/menu-permissions/page.tsx
+// PATH: app/(dashboard)/settings/menu-permissions/page.tsx
+
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -17,7 +18,6 @@ const MENUS = [
   { key: 'pesanan',          label: 'Pesanan',          desc: 'Daftar pesanan masuk' },
   { key: 'pengeluaran',      label: 'Pengeluaran',      desc: 'Catatan pengeluaran toko' },
   { key: 'supplier',         label: 'Supplier',         desc: 'Manajemen data supplier' },
-  { key: 'pembelian',        label: 'Pembelian',        desc: 'Pembelian & stok masuk' },
   { key: 'target-penjualan', label: 'Target Penjualan', desc: 'Atur target bulanan & harian' },
   { key: 'users',            label: 'Users',            desc: 'Manajemen pengguna' },
   { key: 'settings',         label: 'Settings',         desc: 'Pengaturan aplikasi' },
@@ -52,7 +52,7 @@ function Toggle({ enabled, loading, onChange }: {
 }
 
 export default function MenuPermissionsPage() {
-  const router    = useRouter();
+  const router = useRouter();
   const { user, _hasHydrated } = useAuthStore();
 
   const [permissions,    setPermissions]    = useState<Permissions>({} as Permissions);
@@ -66,36 +66,29 @@ export default function MenuPermissionsPage() {
   // Guard: hanya SUPERADMIN
   useEffect(() => {
     if (!_hasHydrated) return;
-    if (user && user.role !== 'SUPERADMIN') {
-      router.replace('/dashboard');
-    }
+    if (user && user.role !== 'SUPERADMIN') router.replace('/dashboard');
   }, [user, _hasHydrated, router]);
 
-  // Fetch outlets saat pertama load
+  // Fetch outlets saat mount
   useEffect(() => {
-    if (!_hasHydrated) return;
-    if (!user || user.role !== 'SUPERADMIN') return;
+    if (!_hasHydrated || !user || user.role !== 'SUPERADMIN') return;
     fetchOutlets();
   }, [_hasHydrated, user]);
 
-  // Fetch permissions setiap kali outlet berubah
+  // ✅ Fetch permissions setiap kali outlet berubah — kirim outletId via query param
   useEffect(() => {
-    if (selectedOutlet) fetchPermissions();
+    if (selectedOutlet) fetchPermissions(selectedOutlet);
   }, [selectedOutlet]);
 
   const fetchOutlets = async () => {
     try {
       const res  = await fetch('/api/outlets');
       const data = await res.json();
-
-      // API /api/outlets mengembalikan { outlets: [...] }
       const list: { id: string; nama: string }[] = data.outlets ?? [];
       setOutlets(list);
-
       if (list.length > 0) {
         setSelectedOutlet(list[0].id);
       } else {
-        // Tidak ada outlet → hentikan loading
         setIsFetching(false);
       }
     } catch (err) {
@@ -105,13 +98,13 @@ export default function MenuPermissionsPage() {
     }
   };
 
-  const fetchPermissions = async () => {
+  // ✅ FIX: kirim outletId sebagai query param agar API filter per outlet yang benar
+  const fetchPermissions = async (outletId: string) => {
     setIsFetching(true);
     setError(null);
     try {
-      const res  = await fetch('/api/menu-permissions');
+      const res  = await fetch(`/api/menu-permissions?outletId=${outletId}`);
       const data = await res.json();
-
       if (data.permissions) {
         setPermissions(data.permissions);
       } else {
@@ -125,6 +118,7 @@ export default function MenuPermissionsPage() {
     }
   };
 
+  // ✅ FIX: kirim outletId (selectedOutlet) di body request PUT
   const handleToggle = async (role: Role, menuKey: string, value: boolean) => {
     const key = `${role}-${menuKey}`;
     setLoadingKey(key);
@@ -138,18 +132,26 @@ export default function MenuPermissionsPage() {
 
     try {
       const res = await fetch('/api/menu-permissions', {
-        method: 'PUT',
+        method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role, menuKey, isEnabled: value }),
+        body:    JSON.stringify({
+          role:      role,
+          menuKey:   menuKey,
+          isEnabled: value,
+          outletId:  selectedOutlet, // ✅ kirim outletId yang dipilih di UI
+        }),
       });
 
-      if (!res.ok) throw new Error(`Gagal menyimpan: ${res.status}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error ?? `Gagal menyimpan: ${res.status}`);
+      }
 
       setSavedKey(key);
       setTimeout(() => setSavedKey(null), 1500);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Save error:', err);
-      setError('Gagal menyimpan perubahan');
+      setError(err.message ?? 'Gagal menyimpan perubahan');
       // Revert on error
       setPermissions(prev => ({
         ...prev,
@@ -167,7 +169,6 @@ export default function MenuPermissionsPage() {
     </div>
   );
 
-  // Bukan SUPERADMIN → null (redirect sudah handle)
   if (!user || user.role !== 'SUPERADMIN') return null;
 
   if (isFetching) return (
@@ -179,6 +180,7 @@ export default function MenuPermissionsPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8">
       <div className="max-w-7xl mx-auto">
+
         {/* Back */}
         <div className="mb-6">
           <Link href="/dashboard"
@@ -195,7 +197,9 @@ export default function MenuPermissionsPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-gray-900">Akses Menu</h1>
-              <p className="text-sm text-gray-500 mt-1">Atur menu mana yang bisa diakses oleh setiap role pengguna</p>
+              <p className="text-sm text-gray-500 mt-1">
+                Atur menu mana yang bisa diakses oleh setiap role pengguna per outlet
+              </p>
             </div>
           </div>
 
@@ -207,27 +211,31 @@ export default function MenuPermissionsPage() {
 
           <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
             <p className="text-sm text-blue-700">
-              <span className="font-semibold">Catatan:</span> SUPERADMIN selalu memiliki akses ke semua menu. Perubahan berlaku secara langsung.
+              <span className="font-semibold">Catatan:</span> SUPERADMIN selalu memiliki akses ke semua menu.
+              Perubahan berlaku langsung dan spesifik per outlet yang dipilih.
             </p>
           </div>
 
-          {/* Pilih Outlet */}
-          {outlets.length > 0 && (
+          {/* ✅ Pilih Outlet */}
+          {outlets.length > 0 ? (
             <div className="mt-4 pt-4 border-t border-gray-100">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Pilih Outlet</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Pilih Outlet
+              </label>
               <select
                 value={selectedOutlet}
                 onChange={e => setSelectedOutlet(e.target.value)}
-                className="w-full md:w-96 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full md:w-96 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 {outlets.map(outlet => (
                   <option key={outlet.id} value={outlet.id}>{outlet.nama}</option>
                 ))}
               </select>
+              <p className="text-xs text-gray-400 mt-1">
+                Permission yang diatur berlaku untuk outlet ini
+              </p>
             </div>
-          )}
-
-          {outlets.length === 0 && (
+          ) : (
             <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
               <p className="text-sm text-yellow-700">Belum ada outlet yang terdaftar.</p>
             </div>
@@ -271,18 +279,15 @@ export default function MenuPermissionsPage() {
                                 loading={isLoading}
                                 onChange={val => handleToggle(role.key, menu.key, val)}
                               />
-                              <div className="h-4">
+                              <div className="h-4 flex items-center justify-center">
                                 {isLoading ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
                                 ) : isSaved ? (
                                   <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+                                ) : enabled ? (
+                                  <Eye className="w-3.5 h-3.5 text-blue-400" />
                                 ) : (
-                                  <span className={enabled ? 'text-blue-500' : 'text-gray-400'}>
-                                    {enabled
-                                      ? <Eye className="w-3.5 h-3.5" />
-                                      : <EyeOff className="w-3.5 h-3.5" />
-                                    }
-                                  </span>
+                                  <EyeOff className="w-3.5 h-3.5 text-gray-300" />
                                 )}
                               </div>
                             </div>
@@ -308,6 +313,7 @@ export default function MenuPermissionsPage() {
             <span className="text-gray-600">Menu nonaktif — tersembunyi</span>
           </span>
         </div>
+
       </div>
     </div>
   );
