@@ -4,10 +4,11 @@ import { ProtectedRoute } from '@/components/shared/ProtectedRoute';
 import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui';
 import { formatCurrency } from '@/lib/utils/format';
+import { useAuthStore } from '@/lib/store/authStore';
 import {
   DollarSign, ShoppingBag, TrendingUp, Calendar,
   Download, Filter, ChevronDown, ChevronUp,
-  Store, Smartphone,
+  Store, Smartphone, Lock,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -67,6 +68,12 @@ const paymentColor = (method: string) => {
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 export default function LaporanPage() {
+  const { user } = useAuthStore();
+
+  // ✅ KASIR hanya bisa lihat & export — tidak bisa edit/hapus apapun
+  const isKasir   = user?.role === 'KASIR';
+  const isReadOnly = isKasir;
+
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState<Stats>({
     totalRevenue: 0, totalTransactions: 0,
@@ -120,6 +127,7 @@ export default function LaporanPage() {
   };
 
   // ─── Export Excel ────────────────────────────────────────────────────────────
+  // ✅ KASIR boleh export
   const exportToExcel = async () => {
     setExporting(true);
     try {
@@ -159,7 +167,17 @@ export default function LaporanPage() {
 
           {/* ── Header ────────────────────────────────────────────────────── */}
           <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-bold text-gray-800">Laporan Penjualan</h1>
+            <div>
+              <h1 className="text-2xl font-bold text-gray-800">Laporan Penjualan</h1>
+              {/* ✅ Tampilkan badge read-only untuk KASIR */}
+              {isReadOnly && (
+                <div className="flex items-center gap-1.5 mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full w-fit">
+                  <Lock className="w-3 h-3" />
+                  <span>Mode Lihat — Hanya bisa export, tidak bisa mengedit data</span>
+                </div>
+              )}
+            </div>
+            {/* ✅ Tombol export tersedia untuk semua role termasuk KASIR */}
             <button
               onClick={exportToExcel}
               disabled={exporting}

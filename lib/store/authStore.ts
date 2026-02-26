@@ -25,18 +25,14 @@ interface AuthState {
   isAuthenticated: boolean;
   _hasHydrated:    boolean;
 
-  // SUPERADMIN: tenant yang sedang aktif di-manage
   activeTenant: ActiveTenant | null;
 
   setHasHydrated: (state: boolean) => void;
   login:          (user: AuthUser) => void;
   logout:         () => void;
   switchOutlet:   (outlet: { id: string; nama: string }) => void;
-
-  // SUPERADMIN: masuk ke konteks tenant tertentu
-  enterTenant: (tenant: ActiveTenant) => void;
-  // SUPERADMIN: keluar dari konteks tenant
-  exitTenant:  () => void;
+  enterTenant:    (tenant: ActiveTenant) => void;
+  exitTenant:     () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -50,32 +46,34 @@ export const useAuthStore = create<AuthState>()(
       setHasHydrated: (state) => set({ _hasHydrated: state }),
 
       login: (user) => {
-        if (user.tenantId) Cookies.set('x-tenant-id', user.tenantId, { expires: 7 });
+        if (user.tenantId) Cookies.set('x-tenant-id',  user.tenantId,  { expires: 7 });
+        if (user.outletId) Cookies.set('x-outlet-id',  user.outletId,  { expires: 7 }); // ✅ simpan outletId
         Cookies.set('x-user-role', user.role, { expires: 7 });
-        if (user.id) Cookies.set('x-user-id', user.id, { expires: 7 });
+        if (user.id)       Cookies.set('x-user-id',    user.id,        { expires: 7 });
         set({ user, isAuthenticated: true, activeTenant: null });
       },
 
       logout: () => {
         Cookies.remove('x-tenant-id');
+        Cookies.remove('x-outlet-id');   // ✅ hapus outletId saat logout
         Cookies.remove('x-user-role');
         Cookies.remove('x-user-id');
         Cookies.remove('x-active-tenant-id');
         set({ user: null, isAuthenticated: false, activeTenant: null });
       },
 
-      switchOutlet: (outlet) =>
+      switchOutlet: (outlet) => {
+        Cookies.set('x-outlet-id', outlet.id, { expires: 7 }); // ✅ update cookie saat ganti outlet
         set((state) => ({
           user: state.user ? { ...state.user, outletId: outlet.id, outlet } : null,
-        })),
+        }));
+      },
 
-      // SUPERADMIN masuk ke konteks tenant tertentu
       enterTenant: (tenant) => {
         Cookies.set('x-active-tenant-id', tenant.id, { expires: 1 });
         set({ activeTenant: tenant });
       },
 
-      // SUPERADMIN keluar dari konteks tenant
       exitTenant: () => {
         Cookies.remove('x-active-tenant-id');
         set({ activeTenant: null });
@@ -85,7 +83,11 @@ export const useAuthStore = create<AuthState>()(
       name: 'pos-auth-storage',
       onRehydrateStorage: () => (state) => {
         state?.setHasHydrated(true);
-        // Restore cookie dari persisted activeTenant
+        // ✅ Restore semua cookie dari persisted state
+        if (state?.user?.tenantId) Cookies.set('x-tenant-id', state.user.tenantId, { expires: 7 });
+        if (state?.user?.outletId) Cookies.set('x-outlet-id', state.user.outletId, { expires: 7 });
+        if (state?.user?.role)     Cookies.set('x-user-role', state.user.role,     { expires: 7 });
+        if (state?.user?.id)       Cookies.set('x-user-id',   state.user.id,       { expires: 7 });
         if (state?.activeTenant?.id) {
           Cookies.set('x-active-tenant-id', state.activeTenant.id, { expires: 1 });
         }

@@ -1,6 +1,14 @@
-/** @type {import('next').NextConfig} */
+// next.config.js
 const nextConfig = {
-  reactStrictMode: true,
+  async redirects() {
+    return [
+      {
+        source: '/outlets',
+        destination: '/tenants',
+        permanent: true, // 308 redirect, SEO-friendly
+      },
+    ];
+  },
 };
 
 module.exports = nextConfig;

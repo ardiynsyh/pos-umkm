@@ -1,101 +1,17 @@
 // app/api/transactions/route.ts
+// ✅ Setiap transaksi berhasil → stok produk otomatis berkurang
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/db/prisma';
-import { PaymentMethod, TransactionStatus } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 
-export async function POST(req: NextRequest) {
-  const tenantId = req.headers.get('x-tenant-id');
-  if (!tenantId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  try {
-    const body = await req.json();
-    const { nomorTransaksi, total, diskon, pajak, totalBayar, uangDibayar, kembalian, metodePembayaran, items, outletId, kasir } = body;
-
-    // Pastikan outlet milik tenant ini
-    let finalOutletId = outletId;
-    if (!finalOutletId) {
-      const defaultOutlet = await prisma.outlet.findFirst({ where: { tenantId } });
-      if (!defaultOutlet) return NextResponse.json({ error: 'Outlet tidak ditemukan' }, { status: 400 });
-      finalOutletId = defaultOutlet.id;
-    }
-
-    const outlet = await prisma.outlet.findUnique({ where: { id: finalOutletId } });
-    if (!outlet || outlet.tenantId !== tenantId) {
-      return NextResponse.json({ error: 'Outlet tidak valid' }, { status: 403 });
-    }
-
-    const productIds = items.map((item: any) => item.productId);
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds }, tenantId },
-      select: { id: true, stok: true, nama: true },
-    });
-
-    if (products.length !== productIds.length) {
-      const foundIds = products.map(p => p.id);
-      const missingIds = productIds.filter((id: string) => !foundIds.includes(id));
-      return NextResponse.json({ error: `Products not found: ${missingIds.join(', ')}` }, { status: 404 });
-    }
-
-    for (const item of items) {
-      const product = products.find(p => p.id === item.productId);
-      if (product && product.stok < item.quantity) {
-        return NextResponse.json({
-          error: `Stok tidak cukup untuk "${product.nama}". Tersedia: ${product.stok}, Diminta: ${item.quantity}`,
-        }, { status: 400 });
-      }
-    }
-
-    let paymentMethodEnum: PaymentMethod;
-    switch (metodePembayaran) {
-      case 'cash':   paymentMethodEnum = PaymentMethod.TUNAI; break;
-      case 'card':   paymentMethodEnum = PaymentMethod.DEBIT; break;
-      case 'ewallet': paymentMethodEnum = PaymentMethod.QRIS; break;
-      default:       paymentMethodEnum = PaymentMethod.TUNAI;
-    }
-
-    const transaction = await prisma.$transaction(async (tx) => {
-      const newTransaction = await tx.transaction.create({
-        data: {
-          nomorTransaksi, total, diskon: diskon || 0, pajak: pajak || 0,
-          totalBayar, uangDibayar, kembalian,
-          metodePembayaran: paymentMethodEnum,
-          status: TransactionStatus.BERHASIL,
-          kasir: kasir || 'Kasir',
-          outletId: finalOutletId,
-          tenantId,          // ← inject tenantId
-          items: {
-            create: items.map((item: any) => ({
-              productId: item.productId, namaProduk: item.nama,
-              quantity: item.quantity, hargaSatuan: item.hargaSatuan, subtotal: item.subtotal,
-            })),
-          },
-        },
-        include: { items: { include: { product: true } } },
-      });
-
-      for (const item of items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stok: { decrement: item.quantity } },
-        });
-      }
-
-      return newTransaction;
-    });
-
-    return NextResponse.json({ success: true, transaction }, { status: 201 });
-  } catch (error) {
-    console.error('Transaction error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ error: 'Failed to create transaction', details: errorMessage }, { status: 500 });
-  }
+function genNomor(): string {
+  const d   = new Date();
+  const pad = (n: number, l = 2) => String(n).padStart(l, '0');
+  return `TRX${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}${String(Math.random()).slice(2,6)}`;
 }
 
 export async function GET(req: NextRequest) {
   const tenantId = req.headers.get('x-tenant-id');
-  const role = req.headers.get('x-user-role');
+  const role     = req.headers.get('x-user-role');
   if (!tenantId && role !== 'SUPERADMIN') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -105,22 +21,137 @@ export async function GET(req: NextRequest) {
     const outletId  = searchParams.get('outletId');
     const startDate = searchParams.get('startDate');
     const endDate   = searchParams.get('endDate');
-    const limit     = searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : 100;
+    const limit     = parseInt(searchParams.get('limit') ?? '50');
 
-    const transactions = await prisma.transaction.findMany({
-      where: {
-        ...(tenantId && { tenantId }),
-        ...(outletId && { outletId }),
-        ...(startDate && endDate && { createdAt: { gte: new Date(startDate), lte: new Date(endDate) } }),
+    const where: any = {
+      ...(tenantId && { tenantId }),
+      ...(outletId  && { outletId }),
+      ...(startDate && endDate && {
+        createdAt: {
+          gte: new Date(startDate),
+          lte: new Date(endDate + 'T23:59:59'),
+        },
+      }),
+    };
+
+    const [transactions, summary] = await Promise.all([
+      prisma.transaction.findMany({
+        where,
+        include: { items: true },
+        orderBy: { createdAt: 'desc' },
+        take: limit,
+      }),
+      prisma.transaction.aggregate({
+        where: { ...where, status: 'BERHASIL' },
+        _sum: { total: true },
+        _count: true,
+      }),
+    ]);
+
+    return NextResponse.json({
+      transactions,
+      summary: {
+        total:  summary._sum.total  ?? 0,
+        count:  summary._count,
       },
-      include: { items: { include: { product: true } }, outlet: true },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
+    });
+  } catch (error) {
+    console.error('[GET /api/transactions]', error);
+    return NextResponse.json({ error: 'Gagal mengambil data' }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const tenantId = req.headers.get('x-tenant-id');
+  const role     = req.headers.get('x-user-role');
+  if (!tenantId && role !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  try {
+    const {
+      outletId, kasir, pelanggan, catatan,
+      metodePembayaran = 'TUNAI',
+      uangDibayar, items,
+      diskon = 0, pajak = 0,
+    } = await req.json();
+
+    if (!outletId || !items?.length) {
+      return NextResponse.json({ error: 'outletId dan items wajib diisi' }, { status: 400 });
+    }
+
+    const resolvedTenantId = tenantId ?? (await prisma.outlet.findUnique({ where: { id: outletId } }))?.tenantId;
+    if (!resolvedTenantId) {
+      return NextResponse.json({ error: 'Outlet tidak ditemukan' }, { status: 404 });
+    }
+
+    // ── Validasi stok semua item sebelum transaksi ────────────────────────────
+    const productIds   = items.map((i: any) => i.productId);
+    const dbProducts   = await prisma.product.findMany({
+      where: { id: { in: productIds }, outletId },
     });
 
-    return NextResponse.json({ success: true, transactions });
+    const stockErrors: string[] = [];
+    for (const item of items) {
+      const prod = dbProducts.find(p => p.id === item.productId);
+      if (!prod) { stockErrors.push(`Produk ${item.namaProduk} tidak ditemukan`); continue; }
+      if (prod.stok < item.quantity) {
+        stockErrors.push(`Stok ${prod.nama} tidak cukup (tersisa ${prod.stok}, dibutuhkan ${item.quantity})`);
+      }
+    }
+
+    if (stockErrors.length > 0) {
+      return NextResponse.json({ error: stockErrors.join('. ') }, { status: 400 });
+    }
+
+    // ── Kalkulasi ─────────────────────────────────────────────────────────────
+    const total     = items.reduce((s: number, i: any) => s + i.subtotal, 0);
+    const totalBayar = total - diskon + pajak;
+    const kembalian  = Math.max((uangDibayar ?? totalBayar) - totalBayar, 0);
+
+    // ── Transaksi + update stok dalam 1 atomic operation ─────────────────────
+    const transaction = await prisma.$transaction(async (tx) => {
+      // 1. Buat transaksi
+      const trx = await tx.transaction.create({
+        data: {
+          nomorTransaksi: genNomor(),
+          total, diskon, pajak, totalBayar,
+          uangDibayar:     uangDibayar ?? totalBayar,
+          kembalian,
+          metodePembayaran,
+          status:    'BERHASIL',
+          kasir:     kasir ?? null,
+          pelanggan: pelanggan ?? null,
+          catatan:   catatan ?? null,
+          outletId,
+          tenantId:  resolvedTenantId,
+          items: {
+            create: items.map((i: any) => ({
+              productId:   i.productId,
+              namaProduk:  i.namaProduk,
+              quantity:    i.quantity,
+              hargaSatuan: i.hargaSatuan,
+              subtotal:    i.subtotal,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      // 2. ✅ Kurangi stok setiap produk secara otomatis
+      for (const item of items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data:  { stok: { decrement: item.quantity } },
+        });
+      }
+
+      return trx;
+    });
+
+    return NextResponse.json({ transaction }, { status: 201 });
   } catch (error) {
-    console.error('Error fetching transactions:', error);
-    return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
+    console.error('[POST /api/transactions]', error);
+    return NextResponse.json({ error: 'Gagal membuat transaksi' }, { status: 500 });
   }
 }

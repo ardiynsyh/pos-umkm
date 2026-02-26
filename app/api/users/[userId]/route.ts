@@ -1,16 +1,61 @@
-import { NextResponse } from 'next/server';
+// app/api/users/[userId]/route.ts
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
+import bcrypt from 'bcrypt';
+
+const ALLOWED_ROLES_FOR_ADMIN = ['MANAGER', 'KASIR'];
 
 export async function PUT(
-  req: Request,
+  req: NextRequest,
   context: { params: Promise<{ userId: string }> }
 ) {
+  const tenantId    = req.headers.get('x-tenant-id');
+  const requestRole = req.headers.get('x-user-role');
+
+  if (!tenantId && requestRole !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { userId } = await context.params;
-    const { nama, email, password, role } = await req.json();
+    const { nama, email, password, role: newRole } = await req.json();
 
-    const data: any = { nama, email, role };
-    if (password) data.password = password; // hanya update password jika diisi
+    if (!nama || !email) {
+      return NextResponse.json({ message: 'Nama dan email harus diisi' }, { status: 400 });
+    }
+
+    if (password && password.length < 8) {
+      return NextResponse.json({ message: 'Password minimal 8 karakter' }, { status: 400 });
+    }
+
+    // Pastikan user yang diedit masih dalam tenant yang sama (kecuali SUPERADMIN)
+    if (tenantId) {
+      const target = await prisma.user.findUnique({ where: { id: userId } });
+      if (!target) {
+        return NextResponse.json({ message: 'User tidak ditemukan' }, { status: 404 });
+      }
+      if (target.tenantId !== tenantId) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
+
+    // ✅ ADMIN tidak boleh assign role SUPERADMIN atau ADMIN ke user lain
+    if (requestRole === 'ADMIN' && newRole && !ALLOWED_ROLES_FOR_ADMIN.includes(newRole)) {
+      return NextResponse.json({
+        message: `Role ADMIN hanya boleh mengatur role: ${ALLOWED_ROLES_FOR_ADMIN.join(', ')}`,
+      }, { status: 403 });
+    }
+
+    const duplicate = await prisma.user.findFirst({
+      where: { email, NOT: { id: userId } },
+    });
+    if (duplicate) {
+      return NextResponse.json({ message: 'Email sudah digunakan' }, { status: 400 });
+    }
+
+    const data: Record<string, any> = { nama, email };
+    if (newRole) data.role = newRole;
+    if (password) data.password = await bcrypt.hash(password, 10);
 
     const user = await prisma.user.update({
       where: { id: userId },
@@ -31,14 +76,38 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _req: Request,
+  req: NextRequest,
   context: { params: Promise<{ userId: string }> }
 ) {
+  const tenantId    = req.headers.get('x-tenant-id');
+  const requestRole = req.headers.get('x-user-role');
+
+  if (!tenantId && requestRole !== 'SUPERADMIN') {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
     const { userId } = await context.params;
 
-    await prisma.user.delete({ where: { id: userId } });
+    if (tenantId) {
+      const target = await prisma.user.findUnique({ where: { id: userId } });
+      if (!target) {
+        return NextResponse.json({ message: 'User tidak ditemukan' }, { status: 404 });
+      }
+      if (target.tenantId !== tenantId) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+      const requestingUserId = req.headers.get('x-user-id');
+      if (requestingUserId && requestingUserId === userId) {
+        return NextResponse.json({ message: 'Tidak dapat menghapus akun sendiri' }, { status: 400 });
+      }
+      // ✅ ADMIN tidak boleh hapus user SUPERADMIN
+      if (requestRole === 'ADMIN' && target.role === 'SUPERADMIN') {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
 
+    await prisma.user.delete({ where: { id: userId } });
     return NextResponse.json({ message: 'User berhasil dihapus' });
   } catch (error: any) {
     if (error.code === 'P2025') {

@@ -8,20 +8,29 @@ interface ProtectedRouteProps {
   children: React.ReactNode;
   requireOwner?: boolean;
   requireSuperAdmin?: boolean;
+  // ✅ Prop baru: tentukan role mana saja yang boleh akses halaman ini
+  // Jika tidak diisi → semua role yang sudah login boleh akses
+  allowedRoles?: ('SUPERADMIN' | 'ADMIN' | 'MANAGER' | 'KASIR')[];
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
-  requireOwner = false,
+  requireOwner      = false,
   requireSuperAdmin = false,
+  allowedRoles,
 }) => {
   const router = useRouter();
   const { user, isAuthenticated, _hasHydrated } = useAuthStore();
 
-  const isSuperAdmin = user?.role === 'SUPERADMIN';
-  const isAdmin      = user?.role === 'ADMIN';
+  const isSuperAdmin        = user?.role === 'SUPERADMIN';
+  const isAdmin             = user?.role === 'ADMIN';
   const hasOwnerAccess      = isSuperAdmin || isAdmin;
   const hasSuperAdminAccess = isSuperAdmin;
+
+  // ✅ Cek allowedRoles jika diisi
+  const hasRoleAccess = allowedRoles
+    ? (user?.role ? allowedRoles.includes(user.role as any) : false)
+    : true;
 
   useEffect(() => {
     if (!_hasHydrated) return;
@@ -38,10 +47,17 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
     if (requireOwner && !hasOwnerAccess) {
       router.push('/dashboard');
+      return;
     }
-  // ✅ Hapus `user` dan `router` dari deps — keduanya tidak stabil
+
+    // ✅ Cek allowedRoles
+    if (allowedRoles && !hasRoleAccess) {
+      router.push('/dashboard');
+      return;
+    }
+
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [_hasHydrated, isAuthenticated, hasSuperAdminAccess, hasOwnerAccess]);
+  }, [_hasHydrated, isAuthenticated, hasSuperAdminAccess, hasOwnerAccess, hasRoleAccess]);
 
   // Belum rehidrasi atau belum login → tampilkan loading
   if (!_hasHydrated || !isAuthenticated) {
@@ -70,6 +86,16 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
           <p className="text-red-600 font-medium">Akses ditolak. Anda tidak memiliki izin.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (allowedRoles && !hasRoleAccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-red-600 font-medium">Akses ditolak. Anda tidak memiliki izin untuk halaman ini.</p>
         </div>
       </div>
     );

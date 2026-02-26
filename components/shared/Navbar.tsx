@@ -9,7 +9,7 @@ import { Button } from '@/components/ui';
 import {
   Home, LogOut, Settings, ShoppingCart,
   Package, BarChart3, Users, ClipboardList, Store,
-  ChevronDown, Shield,
+  ChevronDown, Shield, Building2,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
@@ -22,7 +22,7 @@ const ALL_NAV_ITEMS = [
   { key: 'pesanan',   href: '/kasir/pesanan',   label: 'Pesanan',   icon: ClipboardList, roles: ['SUPERADMIN','ADMIN','MANAGER'] },
   { key: 'users',     href: '/users',           label: 'Users',     icon: Users,         roles: ['SUPERADMIN','ADMIN'] },
   { key: 'settings',  href: '/settings',        label: 'Settings',  icon: Settings,      roles: ['SUPERADMIN','ADMIN'] },
-  { key: 'outlets',   href: '/outlets',         label: 'Outlets',   icon: Store,         roles: ['SUPERADMIN'] },
+  { key: 'tenants',   href: '/tenants',         label: 'Semua Tenant', icon: Building2,  roles: ['SUPERADMIN'] },
   // Menu khusus SUPERADMIN: kelola akses menu
   { key: 'menu-permissions', href: '/settings/menu-permissions', label: 'Akses Menu', icon: Shield, roles: ['SUPERADMIN'] },
 ];

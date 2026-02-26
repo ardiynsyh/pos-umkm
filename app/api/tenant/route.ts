@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     const tenants = await prisma.tenant.findMany({
       include: {
         _count: { select: { outlets: true, users: true } },
+        // Ambil data admin toko (user dengan role ADMIN)
         users: {
           where: { role: 'ADMIN' },
           select: { id: true, nama: true, email: true },
@@ -57,13 +58,12 @@ export async function POST(req: NextRequest) {
     if (!nama)          return NextResponse.json({ message: 'Nama toko wajib diisi' },       { status: 400 });
     if (!adminEmail)    return NextResponse.json({ message: 'Email admin wajib diisi' },      { status: 400 });
     if (!adminPassword) return NextResponse.json({ message: 'Password admin wajib diisi' },   { status: 400 });
-    if (adminPassword.length < 8) {
-      return NextResponse.json({ message: 'Password minimal 8 karakter' }, { status: 400 });
-    }
 
-    // Cek duplikat email admin
+    // ✅ Cek duplikat email admin
     const existingUser = await prisma.user.findUnique({ where: { email: adminEmail } });
     if (existingUser) {
+      // ✅ Enforce 1 admin = 1 toko:
+      // Jika email sudah terdaftar sebagai ADMIN yang sudah punya toko → tolak
       if (existingUser.role === 'ADMIN' && existingUser.tenantId) {
         const existingTenant = await prisma.tenant.findUnique({ where: { id: existingUser.tenantId } });
         return NextResponse.json({
@@ -73,6 +73,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: 'Email admin sudah terdaftar' }, { status: 400 });
     }
 
+    // Cek duplikat email bisnis
     if (email) {
       const existingTenant = await prisma.tenant.findUnique({ where: { email } });
       if (existingTenant) {
@@ -81,10 +82,8 @@ export async function POST(req: NextRequest) {
     }
 
     const slug = await uniqueSlug(generateSlug(nama));
-    const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Buat tenant
       const tenant = await tx.tenant.create({
         data: {
           nama, slug,
@@ -94,17 +93,9 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // ✅ 2. Buat outlet default untuk tenant — ini yang kurang sebelumnya
-      // Tanpa outlet, kasir/manager tidak punya outletId → fitur operasional error
-      const outlet = await tx.outlet.create({
-        data: {
-          nama:     `${nama} (Utama)`,
-          tenantId: tenant.id,
-        },
-      });
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
-      // ✅ 3. Buat user ADMIN dengan tenantId + outletId
-      // outletId diisi agar saat login, cookie x-tenant-id & x-outlet-id cocok dengan data DB
+      // ✅ Admin dibuat dengan tenantId langsung — tidak ada outletId (admin tidak terikat outlet)
       const admin = await tx.user.create({
         data: {
           nama:     adminNama || nama,
@@ -112,18 +103,17 @@ export async function POST(req: NextRequest) {
           password: hashedPassword,
           role:     'ADMIN',
           tenantId: tenant.id,
-          outletId: outlet.id, // ✅ Admin terikat ke outlet utama
+          // outletId sengaja tidak diisi — admin adalah pemilik toko, bukan petugas outlet
         },
       });
 
-      return { tenant, outlet, admin };
+      return { tenant, admin };
     });
 
     return NextResponse.json({
-      message:  `Toko "${result.tenant.nama}" berhasil dibuat`,
-      tenant:   result.tenant,
-      outlet:   { id: result.outlet.id, nama: result.outlet.nama },
-      admin:    { id: result.admin.id, email: result.admin.email },
+      message: `Toko "${result.tenant.nama}" berhasil dibuat`,
+      tenant:  result.tenant,
+      admin:   { id: result.admin.id, email: result.admin.email },
     });
   } catch (error) {
     console.error('[POST /api/tenants]', error);

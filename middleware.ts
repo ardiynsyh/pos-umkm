@@ -1,7 +1,21 @@
+// middleware.ts
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const OWNER_ONLY_ROUTES = ['/pengeluaran', '/users', '/settings'];
+// ─── Route yang hanya bisa diakses ADMIN ke atas ───────────────────────────
+const ADMIN_ONLY_ROUTES = ['/users', '/settings'];
+
+// ─── Route ADMIN + MANAGER ─────────────────────────────────────────────────
+const ADMIN_MANAGER_ROUTES = ['/keuangan', '/target-penjualan'];
+
+// ─── Route operasional (KASIR + ADMIN bisa akses) ─────────────────────────
+const KASIR_ONLY_ROUTES = ['/operasional'];
+
+// ─── Route SUPERADMIN only ─────────────────────────────────────────────────
+const SUPERADMIN_ONLY_ROUTES = ['/tenants', '/settings/menu-permissions'];
+
+// ─── Route meja: ADMIN + SUPERADMIN only ──────────────────────────────────
+const MEJA_ROUTES = ['/settings/meja'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -11,53 +25,86 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 
+  // Skip static assets & API routes (API punya auth sendiri)
+  if (pathname.startsWith('/api/') || pathname.startsWith('/_next/')) {
+    const requestHeaders = new Headers(request.headers);
+    const tenantId       = request.cookies.get('x-tenant-id')?.value;
+    const userRole       = request.cookies.get('x-user-role')?.value;
+    const userId         = request.cookies.get('x-user-id')?.value;
+    const activeTenantId = request.cookies.get('x-active-tenant-id')?.value;
+
+    if (userRole)  requestHeaders.set('x-user-role', userRole);
+    if (userId)    requestHeaders.set('x-user-id', userId);
+
+    if (userRole === 'SUPERADMIN') {
+      if (activeTenantId) {
+        requestHeaders.set('x-tenant-id', activeTenantId);
+        requestHeaders.set('x-is-managing-tenant', 'true');
+      }
+    } else if (tenantId) {
+      requestHeaders.set('x-tenant-id', tenantId);
+    }
+
+    return NextResponse.next({ request: { headers: requestHeaders } });
+  }
+
   const tenantId       = request.cookies.get('x-tenant-id')?.value;
   const userRole       = request.cookies.get('x-user-role')?.value;
   const userId         = request.cookies.get('x-user-id')?.value;
-  // Tenant yang sedang aktif di-manage oleh SUPERADMIN
   const activeTenantId = request.cookies.get('x-active-tenant-id')?.value;
 
-  const requestHeaders = new Headers(request.headers);
+  // Kalau belum login & bukan halaman publik → redirect ke login
+  const publicPaths = ['/login', '/register'];
+  if (!userRole && !publicPaths.some(p => pathname.startsWith(p))) {
+    return NextResponse.redirect(new URL('/login', request.url));
+  }
 
-  // Inject role & userId selalu
+  const requestHeaders = new Headers(request.headers);
   if (userRole)  requestHeaders.set('x-user-role', userRole);
   if (userId)    requestHeaders.set('x-user-id', userId);
 
-  // Inject tenant-id:
-  // Jika SUPERADMIN sedang "masuk" ke tenant tertentu → pakai activeTenantId
-  // Jika SUPERADMIN tanpa active tenant → tidak inject (API handle sendiri)
-  // Jika role lain → pakai tenantId milik user itu sendiri
   if (userRole === 'SUPERADMIN') {
     if (activeTenantId) {
-      // SUPERADMIN sedang mengelola tenant tertentu
       requestHeaders.set('x-tenant-id', activeTenantId);
       requestHeaders.set('x-is-managing-tenant', 'true');
     }
-    // Jika tidak ada activeTenantId → biarkan header kosong,
-    // API akan tahu ini SUPERADMIN global
   } else if (tenantId) {
     requestHeaders.set('x-tenant-id', tenantId);
   }
 
-  // Proteksi owner-only routes
-  const isOwnerRoute = OWNER_ONLY_ROUTES.some(route => pathname.startsWith(route));
-  if (isOwnerRoute && userRole !== 'SUPERADMIN' && userRole !== 'ADMIN') {
-    return NextResponse.redirect(new URL('/dashboard', request.url));
+  // ── Proteksi SUPERADMIN only ───────────────────────────────────────────────
+  if (SUPERADMIN_ONLY_ROUTES.some(r => pathname.startsWith(r))) {
+    if (userRole !== 'SUPERADMIN') {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
   }
 
-  // Redirect SUPERADMIN tanpa activeTenant ke halaman tenants
-  // kecuali sudah di halaman superadmin atau login
-  const superAdminOnlyPaths = ['/tenants', '/login', '/api'];
-  const isAllowedWithoutTenant = superAdminOnlyPaths.some(p => pathname.startsWith(p));
+  // ── Proteksi ADMIN only ────────────────────────────────────────────────────
+  if (ADMIN_ONLY_ROUTES.some(r => pathname.startsWith(r))) {
+    if (userRole !== 'SUPERADMIN' && userRole !== 'ADMIN') {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
+  }
 
-  if (
-    userRole === 'SUPERADMIN' &&
-    !activeTenantId &&
-    !isAllowedWithoutTenant &&
-    pathname !== '/dashboard'
-  ) {
-    // Biarkan SUPERADMIN global akses dashboard & tenants
-    // Untuk route lain, tetap izinkan tapi API akan handle data global
+  // ── Proteksi ADMIN + MANAGER ───────────────────────────────────────────────
+  if (ADMIN_MANAGER_ROUTES.some(r => pathname.startsWith(r))) {
+    if (!['SUPERADMIN', 'ADMIN', 'MANAGER'].includes(userRole ?? '')) {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
+  }
+
+  // ── Proteksi Meja: hanya ADMIN & SUPERADMIN ────────────────────────────────
+  if (MEJA_ROUTES.some(r => pathname.startsWith(r))) {
+    if (userRole !== 'SUPERADMIN' && userRole !== 'ADMIN') {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
+  }
+
+  // ── Proteksi Operasional: ADMIN + KASIR ───────────────────────────────────
+  if (KASIR_ONLY_ROUTES.some(r => pathname.startsWith(r))) {
+    if (!['KASIR', 'SUPERADMIN', 'ADMIN'].includes(userRole ?? '')) {
+      return NextResponse.redirect(new URL('/dashboard', request.url));
+    }
   }
 
   return NextResponse.next({
