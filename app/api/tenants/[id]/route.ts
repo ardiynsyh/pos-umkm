@@ -3,17 +3,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import bcrypt from 'bcrypt';
 
+/**
+ * Perbaikan utama: params sekarang adalah Promise di Next.js 15.
+ * Kita harus mendefinisikan tipenya sebagai Promise dan melakukan await.
+ */
+
 // ── PUT /api/tenants/[id] ──────────────────────────────────────────────────
 export async function PUT(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // Perubahan tipe di sini
 ) {
   const role = req.headers.get('x-user-role');
   if (role !== 'SUPERADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { id } = params;
+  // Melakukan await params sebelum mengambil id
+  const { id } = await params;
 
   try {
     const { nama, email, plan, maxOutlets, adminEmail, adminPassword } = await req.json();
@@ -52,7 +58,7 @@ export async function PUT(
         data: {
           nama: nama.trim(),
           email: email || null,
-          ...(plan       !== undefined && { plan }),
+          ...(plan !== undefined && { plan }),
           ...(maxOutlets !== undefined && { maxOutlets: Number(maxOutlets) || 1 }),
         },
       });
@@ -63,7 +69,7 @@ export async function PUT(
           await tx.user.update({
             where: { id: admin.id },
             data: {
-              ...(adminEmail    && { email: adminEmail }),
+              ...(adminEmail && { email: adminEmail }),
               ...(adminPassword && { password: await bcrypt.hash(adminPassword, 10) }),
             },
           });
@@ -81,17 +87,17 @@ export async function PUT(
 }
 
 // ── DELETE /api/tenants/[id] ───────────────────────────────────────────────
-// ✅ Tanpa $transaction — hapus sequential untuk hindari error P2028 timeout
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // Perubahan tipe di sini
 ) {
   const role = req.headers.get('x-user-role');
   if (role !== 'SUPERADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { id } = params;
+  // Melakukan await params sebelum mengambil id
+  const { id } = await params;
 
   try {
     const existing = await prisma.tenant.findUnique({ where: { id } });
@@ -116,15 +122,14 @@ export async function DELETE(
     // ── 2. Data karyawan & per-outlet records
     if (outletIds.length > 0) {
       await prisma.logAktivitas.deleteMany({ where: { outletId: { in: outletIds } } });
-      await prisma.jadwal.deleteMany({       where: { outletId: { in: outletIds } } });
-      await prisma.absensi.deleteMany({      where: { outletId: { in: outletIds } } });
-      await prisma.payroll.deleteMany({      where: { outletId: { in: outletIds } } });
-      // MenuPermission: field tenantId di model ini sebenarnya = outletId (legacy)
+      await prisma.jadwal.deleteMany({ where: { outletId: { in: outletIds } } });
+      await prisma.absensi.deleteMany({ where: { outletId: { in: outletIds } } });
+      await prisma.payroll.deleteMany({ where: { outletId: { in: outletIds } } });
       await prisma.menuPermission.deleteMany({ where: { tenantId: { in: outletIds } } });
     }
 
     // ── 3. Shift & SalesTarget
-    await prisma.shift.deleteMany({       where: { tenantId: id } });
+    await prisma.shift.deleteMany({ where: { tenantId: id } });
     await prisma.salesTarget.deleteMany({ where: { tenantId: id } });
 
     // ── 4. Keuangan
@@ -133,7 +138,7 @@ export async function DELETE(
     // ── 5. PembelianItem → Pembelian → Supplier
     await prisma.pembelianItem.deleteMany({ where: { pembelian: { tenantId: id } } });
     await prisma.pembelian.deleteMany({ where: { tenantId: id } });
-    await prisma.supplier.deleteMany({  where: { tenantId: id } });
+    await prisma.supplier.deleteMany({ where: { tenantId: id } });
 
     // ── 6. OrderItem → Order → Table
     await prisma.orderItem.deleteMany({ where: { order: { tenantId: id } } });
