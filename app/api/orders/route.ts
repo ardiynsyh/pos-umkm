@@ -7,7 +7,7 @@ import { OrderStatus, PaymentStatus } from '@prisma/client';
 export async function GET(req: NextRequest) {
   const tenantId = req.headers.get('x-tenant-id');
   const role = req.headers.get('x-user-role');
-  
+
   if (!tenantId && role !== 'SUPERADMIN') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -19,8 +19,7 @@ export async function GET(req: NextRequest) {
     const orders = await prisma.order.findMany({
       where: {
         createdAt: { gte: startOfDay },
-        // Pastikan model Order Anda memiliki field tenantId
-        ...(tenantId && { tenantId: tenantId }),
+        ...(tenantId && { tenantId }),
       },
       include: {
         table: { include: { outlet: true } },
@@ -32,7 +31,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: true, orders });
   } catch (error) {
     console.error('Error fetching orders:', error);
-    return NextResponse.json({ success: false, error: 'Gagal memuat pesanan' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: 'Gagal memuat pesanan' },
+      { status: 500 }
+    );
   }
 }
 
@@ -45,13 +47,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { tableId, customerName, items, totalAmount } = body;
+    const { tableId, customerName, items, totalAmount, paymentMethod } = body;
 
     if (!tableId || !items?.length) {
-      return NextResponse.json({ error: 'Data tidak lengkap' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Data tidak lengkap' },
+        { status: 400 }
+      );
     }
 
-    // Gunakan transaksi atau count untuk generate order number
+    // Generate order number berdasarkan count + timestamp
     const orderCount = await prisma.order.count({ where: { tenantId } });
     const orderNumber = `ORD-${Date.now()}-${String(orderCount + 1).padStart(3, '0')}`;
 
@@ -61,31 +66,40 @@ export async function POST(req: NextRequest) {
         customerName: customerName || null,
         status: OrderStatus.PENDING,
         paymentStatus: PaymentStatus.UNPAID,
-        totalAmount: Number(totalAmount), // Pastikan bertipe Number
-        // Gunakan field relasi eksplisit untuk menghindari error 'never'
-        tenantId: tenantId, 
-        tableId: tableId, 
+        totalAmount: Number(totalAmount),
+        paymentMethod: paymentMethod || null,
+        tableId,   // ✅ scalar field langsung
+        tenantId,  // ✅ scalar field langsung
         items: {
-          create: items.map((item: any) => ({
+          create: items.map((item: {
+            productId: string;
+            productName: string;
+            price: number | string;
+            quantity: number | string;
+          }) => ({
             productId: item.productId,
             productName: item.productName,
             price: Number(item.price),
             quantity: Number(item.quantity),
             subtotal: Number(item.price) * Number(item.quantity),
-            tenantId: tenantId, // Sertakan tenantId di tiap item jika ada di skema
+            // ✅ TIDAK ada tenantId di sini — field ini tidak ada di model OrderItem
           })),
         },
       },
-      include: { table: true, items: true },
+      include: {
+        table: true,
+        items: true,
+      },
     });
 
     return NextResponse.json({ success: true, order }, { status: 201 });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error creating order:', error);
-    return NextResponse.json({ 
-        error: 'Gagal membuat pesanan', 
-        detail: error.message 
-    }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json(
+      { error: 'Gagal membuat pesanan', detail: message },
+      { status: 500 }
+    );
   }
 }
 
@@ -100,29 +114,35 @@ export async function PUT(req: NextRequest) {
     const { orderId, status, paymentStatus, paymentMethod } = await req.json();
 
     if (!orderId) {
-      return NextResponse.json({ error: 'Order ID wajib diisi' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'Order ID wajib diisi' },
+        { status: 400 }
+      );
     }
 
-    // Memastikan order yang diupdate milik tenant yang benar
     const order = await prisma.order.update({
-      where: { 
+      where: {
         id: orderId,
-        tenantId: tenantId // Security check
+        tenantId, // ✅ security check: pastikan order milik tenant ini
       },
       data: {
-        ...(status && { status }),
-        ...(paymentStatus && { paymentStatus }),
+        ...(status && { status: status as OrderStatus }),
+        ...(paymentStatus && { paymentStatus: paymentStatus as PaymentStatus }),
         ...(paymentMethod && { paymentMethod }),
       },
-      include: { table: true, items: true },
+      include: {
+        table: true,
+        items: true,
+      },
     });
 
     return NextResponse.json({ success: true, order });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Error updating order:', error);
-    return NextResponse.json({ 
-        error: 'Gagal update pesanan', 
-        detail: error.message 
-    }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json(
+      { error: 'Gagal update pesanan', detail: message },
+      { status: 500 }
+    );
   }
 }
